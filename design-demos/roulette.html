@@ -1,0 +1,1270 @@
+<!DOCTYPE html>
+<!--
+  电费记账本 · roulette.html
+  ═══════════════════════════════════════════════════════════════════
+  本版设计逻辑（🎲 风格轮盘）：实用主义彩虹分类文档 Utility-First Colorful Docs
+  风格来源：Tailwind CSS Docs —— Sky 蓝品牌色 + teal→cyan→sky 青蓝渐变 +
+  Slate 灰阶骨架（#0F172A / #64748B / #F8FAFC）+ 精致 1px 边界的秩序感。
+
+  迁移要点：文档站的「彩虹分类色」在本 App 中转译为**功能语义色**——
+  每种颜色始终对应同一类数据，形成可学习的色彩语言（非装饰彩虹）：
+    · Sky   #0EA5E9  = 用电量 / 电表读数（总览 tab、读数列表、用电柱状图）
+    · Green #10B981  = 缴费 / 余额（记录 tab、缴费列表、余额卡）
+    · Orange#F59E0B  = 阶梯档位 / 电价（设置 tab、档位进度条、档位徽标）
+    · Purple#A855F7  = 费用 / 趋势（趋势 tab、费用柱状图、估算电费）
+    · Pink  #EC4899  = 提醒 / 异常（超35天未抄表、读数回退警告、清空确认）
+
+  字体：Inter（Google Fonts，系统栈兜底）+ JetBrains Mono（所有数字/表读数，
+  tabular-nums）；中文正文走 PingFang SC / Microsoft YaHei 系统栈。
+
+  关键 assumptions：
+  1. 「本月」卡片：若当前自然月尚无归集用电（如月初刚抄表），回退显示最近
+     一个有数据的月份并明确标注月份名，不编造数字。
+  2. 读数区间估算电费 = 区间在各自然月分摊的 kWh × 该月综合单价
+     （该月估算成本 ÷ 该月 kWh），保证 Σ区间费用 ≡ Σ月度费用。
+  3. 强制保存的回退读数（换表）区间用电按 0 计，不产生负用电。
+  4. ?demo=1 仅在本地无真实数据（空库或已是示例数据）时载入示例，
+     避免覆盖用户真实记录。
+  5. 阶梯档位卡按 tierPeriod 取年度/月度累计判断当前档位。
+  ═══════════════════════════════════════════════════════════════════
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#F8FAFC">
+<title>电费记账本</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F8FAFC; --card:#FFFFFF; --line:#E2E8F0; --line2:#F1F5F9;
+  --ink:#0F172A; --sub:#475569; --mut:#64748B; --faint:#94A3B8;
+  --sky:#0EA5E9; --sky-soft:#E0F2FE; --sky-deep:#0284C7;
+  --green:#10B981; --green-soft:#D1FAE5; --green-deep:#059669;
+  --orange:#F59E0B; --orange-soft:#FEF3C7; --orange-deep:#D97706;
+  --purple:#A855F7; --purple-soft:#F3E8FF; --purple-deep:#9333EA;
+  --pink:#EC4899; --pink-soft:#FCE7F3; --pink-deep:#DB2777;
+  --grad:linear-gradient(135deg,#14B8A6 0%,#06B6D4 50%,#38BDF8 100%);
+  --sans:'Inter',-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei','Segoe UI',Roboto,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,'SF Mono',Consolas,'Liberation Mono',Menlo,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{-webkit-text-size-adjust:100%}
+body{background:#EEF2F7;font-family:var(--sans);color:var(--ink);font-size:14px;line-height:1.5}
+.num,.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+#app{max-width:430px;margin:0 auto;min-height:100dvh;background:var(--bg);position:relative;
+  box-shadow:0 0 0 1px var(--line)}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,select,textarea{font-family:inherit;font-size:inherit;color:inherit}
+svg{display:block}
+.hidden{display:none!important}
+
+/* ── 顶栏 ─────────────────────────── */
+.topbar{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:10px;
+  padding:14px 16px 12px;background:rgba(248,250,252,.88);backdrop-filter:blur(12px);
+  -webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.brandmark{width:30px;height:30px;border-radius:8px;background:var(--grad);
+  display:flex;align-items:center;justify-content:center;flex:none;
+  box-shadow:0 2px 6px rgba(6,182,212,.35)}
+.brandmark svg{stroke:#fff}
+.brandname{font-weight:700;font-size:15.5px;letter-spacing:-.01em}
+.topbar .ver{font-family:var(--mono);font-size:10.5px;color:var(--faint);
+  border:1px solid var(--line);border-radius:99px;padding:1px 8px;margin-top:1px}
+.demo-badge{margin-left:auto;display:inline-flex;align-items:center;gap:5px;
+  font-size:11px;font-weight:600;color:var(--orange-deep);background:var(--orange-soft);
+  border:1px solid #FDE68A;border-radius:99px;padding:3px 9px}
+.demo-badge .dot{width:6px;height:6px;border-radius:99px;background:var(--orange)}
+
+/* ── 屏幕容器 ─────────────────────── */
+.screen{display:none;padding:16px 16px calc(86px + env(safe-area-inset-bottom))}
+.screen.active{display:block}
+.sec-label{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:700;
+  letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin:20px 2px 8px}
+.sec-label:first-child{margin-top:2px}
+.sec-label .chip{width:8px;height:8px;border-radius:2.5px;flex:none}
+.chip.c-sky{background:var(--sky)}.chip.c-green{background:var(--green)}
+.chip.c-orange{background:var(--orange)}.chip.c-purple{background:var(--purple)}
+.chip.c-pink{background:var(--pink)}.chip.c-slate{background:var(--faint)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+
+/* ── 总览 ─────────────────────────── */
+.hero{padding:16px 16px 14px}
+.hero-top{display:flex;align-items:baseline;justify-content:space-between}
+.hero-title{font-size:12.5px;font-weight:600;color:var(--sub)}
+.hero-num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:700;
+  font-size:42px;line-height:1.1;letter-spacing:-.02em;margin-top:6px;color:var(--ink)}
+.hero-num .unit{font-size:15px;font-weight:500;color:var(--faint);margin-left:5px;letter-spacing:0}
+.delta{display:inline-flex;align-items:center;gap:3px;font-family:var(--mono);
+  font-variant-numeric:tabular-nums;font-size:12px;font-weight:600;border-radius:99px;padding:2.5px 9px}
+.delta.up{color:var(--pink-deep);background:var(--pink-soft)}
+.delta.down{color:var(--green-deep);background:var(--green-soft)}
+.delta.flat{color:var(--mut);background:var(--line2)}
+.hero-grid{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--line2);margin-top:14px}
+.hero-cell{padding:11px 4px 2px}
+.hero-cell+.hero-cell{border-left:1px solid var(--line2);padding-left:16px}
+.mini-label{font-size:11px;color:var(--faint);font-weight:600}
+.mini-num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:19px;
+  font-weight:600;margin-top:2px}
+.mini-num .u{font-size:11px;color:var(--faint);font-weight:500;margin-left:3px}
+.tier-card{padding:14px 16px}
+.tier-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.tier-badge{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;
+  color:var(--orange-deep)}
+.tier-badge .tno{background:var(--orange-soft);border:1px solid #FDE68A;border-radius:6px;
+  padding:1px 8px}
+.tier-price{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:12.5px;
+  color:var(--sub);font-weight:600}
+.tier-bar{height:8px;border-radius:99px;background:var(--line2);margin:12px 0 8px;overflow:hidden}
+.tier-fill{height:100%;border-radius:99px;background:linear-gradient(90deg,#FCD34D,#F59E0B);
+  transition:width .4s ease}
+.tier-meta{display:flex;justify-content:space-between;font-size:11.5px;color:var(--mut)}
+.tier-meta b{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:600;color:var(--sub)}
+.duo{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stat-card{padding:13px 14px}
+.stat-label{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;color:var(--mut)}
+.stat-label svg{flex:none}
+.stat-num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:22px;
+  font-weight:700;margin-top:5px;letter-spacing:-.01em}
+.stat-num .u{font-size:11px;color:var(--faint);font-weight:500;margin-left:3px}
+.stat-sub{font-size:11px;color:var(--faint);margin-top:2px}
+.notice{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:12px;
+  font-size:12.5px;line-height:1.55}
+.notice.pink{background:var(--pink-soft);border:1px solid #FBCFE8;color:var(--pink-deep)}
+.notice.slate{background:var(--card);border:1px solid var(--line);color:var(--mut)}
+.notice svg{flex:none;margin-top:1px}
+.qa-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+.qa-btn{display:flex;align-items:center;justify-content:center;gap:8px;min-height:48px;
+  border-radius:12px;font-size:14px;font-weight:700;transition:transform .08s}
+.qa-btn:active{transform:scale(.97)}
+.qa-btn.sky{background:var(--grad);color:#fff;box-shadow:0 3px 10px rgba(6,182,212,.3)}
+.qa-btn.green{background:var(--card);border:1px solid var(--line);color:var(--green-deep)}
+.empty{padding:36px 24px;text-align:center}
+.empty-ico{width:52px;height:52px;border-radius:14px;background:var(--sky-soft);
+  display:flex;align-items:center;justify-content:center;margin:0 auto 14px}
+.empty h3{font-size:15.5px;font-weight:700;margin-bottom:6px}
+.empty p{font-size:12.5px;color:var(--mut);margin-bottom:18px}
+
+/* ── 分段切换 / 记录 ───────────────── */
+.seg{display:grid;grid-template-columns:1fr 1fr;background:var(--line2);border:1px solid var(--line);
+  border-radius:10px;padding:3px;gap:3px}
+.seg button{min-height:38px;border-radius:8px;font-size:13px;font-weight:600;color:var(--mut);
+  display:flex;align-items:center;justify-content:center;gap:6px}
+.seg button svg{stroke:currentColor}
+.seg button.on{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(15,23,42,.08)}
+.seg button.on.t-sky{color:var(--sky-deep)}
+.seg button.on.t-green{color:var(--green-deep)}
+.seg button.on.t-purple{color:var(--purple-deep)}
+.rows{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;padding:12px 14px;width:100%;text-align:left;
+  min-height:56px}
+.row+.row{border-top:1px solid var(--line2)}
+.row:active{background:var(--bg)}
+.row-dot{width:8px;height:8px;border-radius:3px;flex:none}
+.row-main{flex:1;min-width:0}
+.row-t{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:14.5px;font-weight:600}
+.row-s{font-size:11.5px;color:var(--mut);margin-top:1px;display:flex;gap:8px;flex-wrap:wrap}
+.row-s .num{font-weight:500}
+.row-end{text-align:right;flex:none}
+.row-v{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:15px;font-weight:700}
+.row-v.v-sky{color:var(--sky-deep)}.row-v.v-green{color:var(--green-deep)}
+.row-v.v-purple{color:var(--purple-deep)}
+.row-vs{font-size:11px;color:var(--faint);font-family:var(--mono);font-variant-numeric:tabular-nums}
+.add-fab{position:fixed;right:calc(50% - 215px + 16px);bottom:calc(76px + env(safe-area-inset-bottom));
+  z-index:25;width:52px;height:52px;border-radius:16px;background:var(--grad);color:#fff;
+  display:flex;align-items:center;justify-content:center;box-shadow:0 6px 16px rgba(6,182,212,.4)}
+@media (max-width:430px){.add-fab{right:16px}}
+.add-fab:active{transform:scale(.94)}
+
+/* ── 趋势 ─────────────────────────── */
+.chart-card{padding:14px}
+.chart-svg{width:100%;height:auto}
+.bar{cursor:pointer}
+.chart-detail{border-top:1px dashed var(--line);margin-top:10px;padding-top:12px}
+.cd-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.cd-cell .mini-label{font-size:10.5px}
+.cd-cell .mini-num{font-size:15px}
+.tri-stats{display:grid;grid-template-columns:repeat(3,1fr);margin-top:12px}
+.tri-stats>div{padding:12px 6px 12px 14px}
+.tri-stats>div+div{border-left:1px solid var(--line2)}
+
+/* ── 设置 ─────────────────────────── */
+.set-card{padding:6px 0}
+.set-row{display:flex;align-items:center;gap:12px;padding:12px 14px;min-height:52px;width:100%;
+  text-align:left;font-size:13.5px}
+.set-row+.set-row{border-top:1px solid var(--line2)}
+.set-row .grow{flex:1}
+.set-row .lbl{font-weight:600}
+.set-row .hint{font-size:11.5px;color:var(--faint);margin-top:1px}
+.radio{width:20px;height:20px;border-radius:99px;border:2px solid var(--line);flex:none;
+  display:flex;align-items:center;justify-content:center}
+.radio.on{border-color:var(--orange)}
+.radio.on::after{content:'';width:10px;height:10px;border-radius:99px;background:var(--orange)}
+.inp{border:1px solid var(--line);border-radius:9px;background:var(--bg);padding:8px 10px;
+  font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:14px;font-weight:600;
+  width:100%;outline:none}
+.inp:focus{border-color:var(--sky);box-shadow:0 0 0 3px var(--sky-soft)}
+.inp.sm{width:84px;text-align:right;padding:7px 8px;font-size:13px}
+.inp.grow{width:0;flex:1;min-width:56px;text-align:right;padding:7px 8px;font-size:13px}
+.tier-row{display:flex;align-items:center;gap:6px;padding:10px 12px}
+.tier-row+.tier-row{border-top:1px solid var(--line2)}
+.tier-row .tn{font-size:11.5px;font-weight:700;color:var(--orange-deep);background:var(--orange-soft);
+  border-radius:6px;padding:2px 7px;flex:none;white-space:nowrap}
+.tier-row .sep{font-size:11px;color:var(--faint);flex:none;white-space:nowrap}
+.icon-btn{width:34px;height:34px;min-height:34px;border-radius:8px;display:flex;align-items:center;
+  justify-content:center;color:var(--faint);flex:none}
+.icon-btn:active{background:var(--line2)}
+.seg2{display:flex;background:var(--line2);border:1px solid var(--line);border-radius:9px;padding:2px;gap:2px}
+.seg2 button{min-height:32px;padding:0 14px;border-radius:7px;font-size:12.5px;font-weight:600;color:var(--mut)}
+.seg2 button.on{background:var(--card);color:var(--orange-deep);box-shadow:0 1px 3px rgba(15,23,42,.08)}
+.link-row{color:var(--ink)}
+.link-row:active{background:var(--bg)}
+.link-row svg.lead{stroke:var(--mut)}
+.link-row.danger,.link-row.danger svg.lead{color:var(--pink-deep);stroke:var(--pink-deep)}
+.link-row.confirm{background:var(--pink-soft)}
+.about{font-size:12px;color:var(--mut);line-height:1.7;padding:12px 14px}
+
+/* ── 底部 tab 栏 ───────────────────── */
+.tabbar{position:fixed;bottom:0;left:0;right:0;margin:0 auto;max-width:430px;z-index:40;
+  display:grid;grid-template-columns:repeat(4,1fr);background:rgba(255,255,255,.94);
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
+.tab{display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 0 8px;
+  min-height:56px;color:var(--faint);position:relative;text-decoration:none}
+.tab .bar-ind{position:absolute;top:-1px;left:50%;transform:translateX(-50%) scaleX(0);
+  width:32px;height:2.5px;border-radius:0 0 3px 3px;transition:transform .2s}
+.tab span{font-size:10.5px;font-weight:600}
+.tab.on .bar-ind{transform:translateX(-50%) scaleX(1)}
+.tab.on.t-sky{color:var(--sky-deep)}.tab.on.t-sky .bar-ind{background:var(--sky)}
+.tab.on.t-green{color:var(--green-deep)}.tab.on.t-green .bar-ind{background:var(--green)}
+.tab.on.t-purple{color:var(--purple-deep)}.tab.on.t-purple .bar-ind{background:var(--purple)}
+.tab.on.t-orange{color:var(--orange-deep)}.tab.on.t-orange .bar-ind{background:var(--orange)}
+
+/* ── 底部弹层 ──────────────────────── */
+.overlay{position:fixed;inset:0;z-index:50;background:rgba(15,23,42,.4);opacity:0;
+  transition:opacity .22s;pointer-events:none}
+.overlay.open{opacity:1;pointer-events:auto}
+.sheet{position:fixed;bottom:0;left:0;right:0;margin:0 auto;max-width:430px;z-index:60;
+  background:var(--card);border-radius:18px 18px 0 0;transform:translateY(105%);
+  transition:transform .26s cubic-bezier(.32,.72,.25,1);
+  padding:10px 18px calc(20px + env(safe-area-inset-bottom));
+  box-shadow:0 -8px 30px rgba(15,23,42,.15)}
+.sheet.open{transform:translateY(0)}
+.sheet-grip{width:36px;height:4px;border-radius:99px;background:var(--line);margin:0 auto 12px}
+.sheet-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.sheet-title{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:700}
+.f-label{font-size:11.5px;font-weight:700;color:var(--mut);margin:14px 2px 6px;
+  letter-spacing:.04em}
+.f-label:first-of-type{margin-top:0}
+.big-inp{width:100%;border:1.5px solid var(--line);border-radius:12px;background:var(--bg);
+  padding:12px 14px;font-family:var(--mono);font-variant-numeric:tabular-nums;
+  font-size:30px;font-weight:700;text-align:center;outline:none;letter-spacing:.01em}
+.big-inp:focus{border-color:var(--sky);box-shadow:0 0 0 4px var(--sky-soft)}
+.big-inp.green:focus{border-color:var(--green);box-shadow:0 0 0 4px var(--green-soft)}
+.warn-box{display:none;gap:8px;align-items:flex-start;background:var(--pink-soft);
+  border:1px solid #FBCFE8;color:var(--pink-deep);border-radius:10px;padding:10px 12px;
+  font-size:12px;line-height:1.55;margin-top:12px}
+.warn-box.show{display:flex}
+.sheet-actions{display:flex;gap:10px;margin-top:18px}
+.btn{flex:1;min-height:48px;border-radius:12px;font-size:14.5px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;gap:7px}
+.btn:active{transform:scale(.98)}
+.btn.primary{background:var(--grad);color:#fff;box-shadow:0 3px 10px rgba(6,182,212,.3)}
+.btn.primary.force{background:var(--pink);box-shadow:0 3px 10px rgba(236,72,153,.3)}
+.btn.green{background:var(--green);color:#fff;box-shadow:0 3px 10px rgba(16,185,129,.3)}
+.btn.ghost-danger{flex:0 0 52px;border:1px solid #FBCFE8;color:var(--pink-deep);border-radius:12px}
+
+/* ── toast ─────────────────────────── */
+#toast{position:fixed;left:50%;bottom:calc(96px + env(safe-area-inset-bottom));z-index:80;
+  transform:translateX(-50%) translateY(8px);background:var(--ink);color:#F8FAFC;
+  font-size:12.5px;font-weight:600;border-radius:99px;padding:9px 18px;opacity:0;
+  transition:all .25s;pointer-events:none;white-space:nowrap}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brandmark">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4.5 13.5H11L10 22l8.5-11.5H13L13 2z"/></svg>
+    </div>
+    <div>
+      <div class="brandname">电费记账本</div>
+    </div>
+    <span class="ver">elec.v1</span>
+    <span id="demoBadge" class="demo-badge hidden"><span class="dot"></span>示例数据</span>
+  </header>
+
+  <main>
+    <section id="screen-overview" class="screen"></section>
+    <section id="screen-records" class="screen"></section>
+    <section id="screen-trends" class="screen"></section>
+    <section id="screen-settings" class="screen"></section>
+  </main>
+
+  <button id="fab" class="add-fab hidden" aria-label="新增记录">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+  </button>
+
+  <nav class="tabbar">
+    <a class="tab t-sky" href="#overview" data-tab="overview">
+      <i class="bar-ind"></i>
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg>
+      <span>总览</span>
+    </a>
+    <a class="tab t-green" href="#records" data-tab="records">
+      <i class="bar-ind"></i>
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg>
+      <span>记录</span>
+    </a>
+    <a class="tab t-purple" href="#trends" data-tab="trends">
+      <i class="bar-ind"></i>
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M7 14v3M12 9v8M17 5v12"/></svg>
+      <span>趋势</span>
+    </a>
+    <a class="tab t-orange" href="#settings" data-tab="settings">
+      <i class="bar-ind"></i>
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+      <span>设置</span>
+    </a>
+  </nav>
+</div>
+
+<div id="overlay" class="overlay"></div>
+
+<!-- 读数弹层 -->
+<div id="sheet-reading" class="sheet" role="dialog" aria-label="电表读数">
+  <div class="sheet-grip"></div>
+  <div class="sheet-head">
+    <div class="sheet-title">
+      <span class="chip c-sky" style="width:10px;height:10px"></span>
+      <span id="rd-title">记一笔读数</span>
+    </div>
+    <button class="icon-btn" data-close>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+  <div class="f-label">日期</div>
+  <input type="date" id="rd-date" class="inp" style="min-height:44px">
+  <div class="f-label">电表读数（度）</div>
+  <input type="number" inputmode="decimal" step="0.1" id="rd-value" class="big-inp" placeholder="00000.0">
+  <div class="f-label">备注（选填）</div>
+  <input type="text" id="rd-note" class="inp" style="font-family:var(--sans);font-weight:500;min-height:44px" placeholder="如：换表 / 楼道电表箱">
+  <div class="warn-box" id="rd-warn">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4M12 17h.01"/></svg>
+    <span id="rd-warn-text"></span>
+  </div>
+  <div class="sheet-actions">
+    <button class="btn ghost-danger hidden" id="rd-del" aria-label="删除">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+    </button>
+    <button class="btn primary" id="rd-save">保存读数</button>
+  </div>
+</div>
+
+<!-- 缴费弹层 -->
+<div id="sheet-payment" class="sheet" role="dialog" aria-label="缴费记录">
+  <div class="sheet-grip"></div>
+  <div class="sheet-head">
+    <div class="sheet-title">
+      <span class="chip c-green" style="width:10px;height:10px"></span>
+      <span id="pm-title">记一笔缴费</span>
+    </div>
+    <button class="icon-btn" data-close>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+  <div class="f-label">日期</div>
+  <input type="date" id="pm-date" class="inp" style="min-height:44px">
+  <div class="f-label">缴费金额（元）</div>
+  <input type="number" inputmode="decimal" step="0.01" id="pm-value" class="big-inp green" placeholder="0.00">
+  <div class="f-label">备注（选填）</div>
+  <input type="text" id="pm-note" class="inp" style="font-family:var(--sans);font-weight:500;min-height:44px" placeholder="如：网上国网充值 / 物业代收">
+  <div class="warn-box" id="pm-warn">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4M12 17h.01"/></svg>
+    <span id="pm-warn-text"></span>
+  </div>
+  <div class="sheet-actions">
+    <button class="btn ghost-danger hidden" id="pm-del" aria-label="删除">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+    </button>
+    <button class="btn green" id="pm-save">保存缴费</button>
+  </div>
+</div>
+
+<input type="file" id="importFile" accept="application/json,.json" class="hidden">
+<div id="toast"></div>
+<script>
+'use strict';
+/* ════════ 存储层 ════════ */
+const KEY = 'elec.v1';
+const DEFAULT_SETTINGS = {
+  pricingMode: 'tiered',
+  flatPrice: 0.55,
+  tiers: [
+    { limit: 2160, price: 0.4883 },
+    { limit: 4800, price: 0.5383 },
+    { limit: null, price: 0.7883 }
+  ],
+  tierPeriod: 'year'
+};
+let store = loadStore();
+
+function loadStore() {
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (raw) {
+      const d = JSON.parse(raw);
+      return {
+        settings: Object.assign({}, DEFAULT_SETTINGS, d.settings || {}),
+        readings: Array.isArray(d.readings) ? d.readings : [],
+        payments: Array.isArray(d.payments) ? d.payments : [],
+        meta: d.meta || {}
+      };
+    }
+  } catch (e) { /* 损坏数据回退 */ }
+  return { settings: JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), readings: [], payments: [], meta: {} };
+}
+function save() {
+  try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) {}
+}
+function uid(p) { return p + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+/* ════════ 日期工具（全部走本地时区，避免 UTC 偏移） ════════ */
+function parseDate(s) { // "YYYY-MM-DD" -> Date(本地零点)
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+function fmtDate(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function todayStr() { return fmtDate(new Date()); }
+function daysBetween(s1, s2) { // 整天数
+  return Math.round((parseDate(s2) - parseDate(s1)) / 86400000);
+}
+function monthKey(s) { return s.slice(0, 7); } // "YYYY-MM"
+function addDays(dateStr, n) {
+  const d = parseDate(dateStr); d.setDate(d.getDate() + n); return fmtDate(d);
+}
+function cnDate(s) { // "2026-07-01" -> "2026/07/01"
+  return s.replace(/-/g, '/');
+}
+function cnMonth(mk) { // "2026-07" -> "2026年7月"
+  const [y, m] = mk.split('-'); return y + '年' + Number(m) + '月';
+}
+/* ════════ 数字格式 ════════ */
+function fk(n) { return (Math.round(n * 10) / 10).toFixed(1); }   // 电量 1 位
+function fm(n) { return (Math.round(n * 100) / 100).toFixed(2); } // 金额 2 位
+
+/* ════════ 计算引擎（spec 第五节） ════════ */
+// 1. 排序后的读数副本
+function sortedReadings() {
+  return store.readings.slice().sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : a.value - b.value);
+}
+// 相邻读数区间：{fromDate,toDate,kwh,days,daily,fromVal,toVal}
+// 回退读数（换表强制保存）区间用电按 0 计（assumption 3）
+function getIntervals() {
+  const rs = sortedReadings();
+  const out = [];
+  for (let i = 1; i < rs.length; i++) {
+    const a = rs[i - 1], b = rs[i];
+    const days = daysBetween(a.date, b.date);
+    if (days <= 0) continue; // 同日重复读数不计区间
+    const kwh = Math.max(0, b.value - a.value);
+    out.push({ fromDate: a.date, toDate: b.date, kwh, days, daily: kwh / days,
+               fromVal: a.value, toVal: b.value, toId: b.id, negative: b.value < a.value });
+  }
+  return out;
+}
+// 2. 月度归集：区间用电按天均摊到自然日，再按自然月汇总
+//    消耗日约定：区间 [fromDate, toDate) 共 days 天，逐日累加
+//    返回 { kwhByMonth: Map, daysByMonth: Map, perIntervalByMonth: Map(toId -> Map(mk->kwh)) }
+function allocateMonthly(intervals) {
+  const kwhByMonth = new Map(), daysByMonth = new Map(), perInt = new Map();
+  for (const iv of intervals) {
+    const im = new Map();
+    let d = iv.fromDate;
+    for (let i = 0; i < iv.days; i++) {
+      const mk = monthKey(d);
+      kwhByMonth.set(mk, (kwhByMonth.get(mk) || 0) + iv.daily);
+      daysByMonth.set(mk, (daysByMonth.get(mk) || 0) + 1);
+      im.set(mk, (im.get(mk) || 0) + iv.daily);
+      d = addDays(d, 1);
+    }
+    perInt.set(iv.toId, im);
+  }
+  return { kwhByMonth, daysByMonth, perInt };
+}
+// 阶梯累计电费函数：0..x 度的总费用（tiers 的 limit 为累计上限，null=不限）
+function tierCumCost(x, tiers) {
+  let total = 0, prev = 0;
+  for (const t of tiers) {
+    const upper = (t.limit === null || t.limit === undefined || t.limit === '') ? Infinity : Number(t.limit);
+    const amt = Math.min(x, upper) - prev;
+    if (amt > 0) total += amt * Number(t.price);
+    if (x <= upper) break;
+    prev = upper;
+  }
+  return total;
+}
+// 当前累计 cum 所在档位下标
+function tierIndexAt(cum, tiers) {
+  for (let i = 0; i < tiers.length; i++) {
+    const upper = (tiers[i].limit === null || tiers[i].limit === undefined || tiers[i].limit === '') ? Infinity : Number(tiers[i].limit);
+    if (cum <= upper) return i;
+  }
+  return tiers.length - 1;
+}
+// 3+4+5. 每月估算成本（含阶梯拆分 / 单一电价）
+//    返回 Map(mk -> cost)
+function monthlyCosts(kwhByMonth) {
+  const s = store.settings;
+  const months = Array.from(kwhByMonth.keys()).sort();
+  const costs = new Map();
+  if (s.pricingMode === 'flat') {
+    for (const mk of months) costs.set(mk, kwhByMonth.get(mk) * Number(s.flatPrice));
+    return costs;
+  }
+  if (s.tierPeriod === 'month') {
+    for (const mk of months) costs.set(mk, tierCumCost(kwhByMonth.get(mk), s.tiers));
+    return costs;
+  }
+  // tierPeriod = year：每年 1/1 清零，逐月叠加拆档
+  const cumByYear = new Map();
+  for (const mk of months) {
+    const y = mk.slice(0, 4);
+    const before = cumByYear.get(y) || 0;
+    const after = before + kwhByMonth.get(mk);
+    costs.set(mk, tierCumCost(after, s.tiers) - tierCumCost(before, s.tiers));
+    cumByYear.set(y, after);
+  }
+  return costs;
+}
+// 汇总一次性计算所有派生数据
+function computeAll() {
+  const intervals = getIntervals();
+  const { kwhByMonth, daysByMonth, perInt } = allocateMonthly(intervals);
+  const costByMonth = monthlyCosts(kwhByMonth);
+  // 月综合单价（assumption 2）
+  const unitPrice = new Map();
+  for (const [mk, k] of kwhByMonth) unitPrice.set(mk, k > 0 ? costByMonth.get(mk) / k : 0);
+  // 每个区间的估算电费 = Σ(区间在各月分摊 kWh × 该月综合单价)
+  const intervalCost = new Map();
+  for (const iv of intervals) {
+    let c = 0;
+    const im = perInt.get(iv.toId);
+    if (im) for (const [mk, k] of im) c += k * (unitPrice.get(mk) || 0);
+    intervalCost.set(iv.toId, c);
+  }
+  const totalCost = Array.from(costByMonth.values()).reduce((a, b) => a + b, 0);
+  const totalPaid = store.payments.reduce((a, p) => a + Number(p.amount), 0);
+  return { intervals, kwhByMonth, daysByMonth, costByMonth, intervalCost, unitPrice,
+           totalCost, totalPaid, balance: totalPaid - totalCost };
+}
+
+/* ════════ 示例数据（spec 第六节） ════════ */
+const DEMO = {
+  readings: [
+    ['2025-05-01', 8210.5], ['2025-06-02', 8431.9], ['2025-07-01', 8698.3],
+    ['2025-08-03', 9126.9], ['2025-09-01', 9512.4], ['2025-10-02', 9748.9],
+    ['2025-11-01', 9937.6], ['2025-12-01', 10152.3], ['2026-01-02', 10437.9],
+    ['2026-02-01', 10783.4], ['2026-03-02', 11105.6], ['2026-04-01', 11342.8],
+    ['2026-05-01', 11534.5], ['2026-06-01', 11751.2], ['2026-07-01', 11989.3]
+  ],
+  payments: [
+    ['2025-05-20', 300, '网上国网充值'], ['2025-07-15', 450, '网上国网充值'],
+    ['2025-08-28', 500, '物业代收'],     ['2025-10-18', 260, '网上国网充值'],
+    ['2025-12-22', 380, '网上国网充值'], ['2026-02-10', 420, '物业代收'],
+    ['2026-04-15', 280, '网上国网充值'], ['2026-06-12', 350, '网上国网充值']
+  ]
+};
+function loadDemo() {
+  store.readings = DEMO.readings.map(([date, value], i) => ({ id: 'demo-r' + i, date, value, note: '' }));
+  store.payments = DEMO.payments.map(([date, amount, note], i) => ({ id: 'demo-p' + i, date, amount, note }));
+  store.meta.demo = true;
+  save();
+}
+function clearAll() {
+  store = { settings: JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), readings: [], payments: [], meta: {} };
+  save();
+}
+</script>
+<script>
+'use strict';
+/* ════════ 小图标库（内联 SVG，stroke 1.75） ════════ */
+function icon(name, size, cls, color) {
+  const paths = {
+    zap: '<path d="M13 2 4.5 13.5H11L10 22l8.5-11.5H13L13 2z"/>',
+    wallet: '<path d="M19 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H5"/><path d="M16 13h.01"/>',
+    gauge: '<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
+    calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+    layers: '<path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5M2 12l10 5 10-5"/>',
+    coins: '<circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18M7 6h1v4"/><path d="m16.71 13.88.7.71-2.82 2.82"/>',
+    trend: '<path d="m22 7-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/>',
+    alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4M12 17h.01"/>',
+    info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    banknote: '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/>',
+    download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/>',
+    upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5M12 3v12"/>',
+    database: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>',
+    trash: '<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+    chevron: '<path d="m9 18 6-6-6-6"/>',
+    clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+    shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>'
+  };
+  return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="' +
+    (color || 'currentColor') + '" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"' +
+    (cls ? ' class="' + cls + '"' : '') + '>' + paths[name] + '</svg>';
+}
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/* ════════ Tab 1 · 总览 ════════ */
+function renderOverview() {
+  const el = document.getElementById('screen-overview');
+  const C = computeAll();
+  const rs = sortedReadings();
+
+  // 读数不足 2 条 → 引导空状态（spec 5.6）
+  if (rs.length < 2) {
+    el.innerHTML =
+      '<div class="card empty">' +
+        '<div class="empty-ico">' + icon('gauge', 26, '', '#0EA5E9') + '</div>' +
+        (rs.length === 0
+          ? '<h3>从第一次抄表开始</h3><p>记录两次电表读数，就能自动算出用电量、<br>估算电费与阶梯档位。</p>'
+          : '<h3>再记一次读数就能看到用电量了</h3><p>已有 1 条读数（' + cnDate(rs[0].date) + ' · ' +
+            '<span class="num">' + fk(rs[0].value) + '</span> 度），<br>下次抄表后即可自动计算区间用电。</p>') +
+        '<button class="qa-btn sky" style="width:100%" data-act="add-reading">' + icon('plus', 17) + '记一笔读数</button>' +
+      '</div>' +
+      '<div class="qa-row"><button class="qa-btn green" data-act="add-payment" style="grid-column:span 2">' +
+        icon('banknote', 17) + '记一笔缴费</button></div>';
+    return;
+  }
+
+  // 展示月份：当前自然月无数据时回退到最近有数据的月份（assumption 1）
+  const nowMk = monthKey(todayStr());
+  const monthsAsc = Array.from(C.kwhByMonth.keys()).sort();
+  let dispMk = nowMk;
+  if (!(C.kwhByMonth.get(nowMk) > 0.05)) {
+    for (let i = monthsAsc.length - 1; i >= 0; i--) {
+      if (C.kwhByMonth.get(monthsAsc[i]) > 0.05) { dispMk = monthsAsc[i]; break; }
+    }
+  }
+  const dispKwh = C.kwhByMonth.get(dispMk) || 0;
+  const dispCost = C.costByMonth.get(dispMk) || 0;
+  // 环比上月
+  const [dy, dm] = dispMk.split('-').map(Number);
+  const prevMk = fmtDate(new Date(dy, dm - 2, 1)).slice(0, 7);
+  const prevKwh = C.kwhByMonth.get(prevMk) || 0;
+  let deltaHtml = '<span class="delta flat">— 无上月数据</span>';
+  if (prevKwh > 0.05) {
+    const pct = (dispKwh - prevKwh) / prevKwh * 100;
+    const cls = pct > 0.5 ? 'up' : pct < -0.5 ? 'down' : 'flat';
+    const arrow = pct > 0.5 ? '↑' : pct < -0.5 ? '↓' : '≈';
+    deltaHtml = '<span class="delta ' + cls + '">' + arrow + ' ' + Math.abs(pct).toFixed(1) + '% 环比上月</span>';
+  }
+  // 日均（最近抄表区间）；同日重复读数可能导致无有效区间
+  const lastIv = C.intervals[C.intervals.length - 1] || { daily: 0 };
+  // 距上次抄表
+  const lastRead = rs[rs.length - 1];
+  const sinceDays = daysBetween(lastRead.date, todayStr());
+  // 阶梯档位（按 tierPeriod 取累计）
+  const s = store.settings;
+  const yearNow = todayStr().slice(0, 4);
+  let cum = 0;
+  if (s.tierPeriod === 'year') {
+    for (const [mk, k] of C.kwhByMonth) if (mk.slice(0, 4) === yearNow) cum += k;
+  } else {
+    cum = C.kwhByMonth.get(nowMk) || C.kwhByMonth.get(dispMk) || 0;
+  }
+  const cumLabel = s.tierPeriod === 'year' ? yearNow + ' 年度累计' : cnMonth(dispMk) + '累计';
+  let tierHtml = '';
+  if (s.pricingMode === 'tiered') {
+    const ti = tierIndexAt(cum, s.tiers);
+    const t = s.tiers[ti];
+    const upper = (t.limit === null || t.limit === undefined || t.limit === '') ? Infinity : Number(t.limit);
+    const lower = ti === 0 ? 0 : Number(s.tiers[ti - 1].limit);
+    const isTop = upper === Infinity;
+    const span = isTop ? Math.max(cum - lower, 1) * 1.25 : upper - lower;
+    const pct = Math.min(100, Math.max(2, (cum - lower) / span * 100));
+    tierHtml =
+      '<div class="sec-label"><span class="chip c-orange"></span>阶梯电价 · ' + (s.tierPeriod === 'year' ? '按年累计' : '按月累计') + '</div>' +
+      '<div class="card tier-card">' +
+        '<div class="tier-head">' +
+          '<span class="tier-badge"><span class="tno">第' + '一二三四五六'[ti] + '档</span>现行电价</span>' +
+          '<span class="tier-price">' + Number(t.price).toFixed(4) + ' 元/度</span>' +
+        '</div>' +
+        '<div class="tier-bar"><div class="tier-fill" style="width:' + pct.toFixed(1) + '%"></div></div>' +
+        '<div class="tier-meta"><span>' + cumLabel + ' <b>' + fk(cum) + '</b> 度</span>' +
+        '<span>' + (isTop ? '已在最高档' : '距下一档还剩 <b>' + fk(upper - cum) + '</b> 度') + '</span></div>' +
+      '</div>';
+  } else {
+    tierHtml =
+      '<div class="sec-label"><span class="chip c-orange"></span>电价</div>' +
+      '<div class="card tier-card"><div class="tier-head">' +
+        '<span class="tier-badge"><span class="tno">单一电价</span></span>' +
+        '<span class="tier-price">' + Number(s.flatPrice).toFixed(4) + ' 元/度</span></div>' +
+        '<div class="tier-meta" style="margin-top:10px"><span>' + cumLabel + ' <b>' + fk(cum) + '</b> 度</span></div>' +
+      '</div>';
+  }
+  // 抄表提醒（>35 天，粉=提醒色）
+  const remindHtml = sinceDays > 35
+    ? '<div class="notice pink" style="margin-top:14px">' + icon('alert', 16) +
+      '<span>距上次抄表已 <b class="num">' + sinceDays + '</b> 天，读数间隔越久，月度归集越粗略——抽空抄一次表吧。</span></div>'
+    : '';
+
+  el.innerHTML =
+    '<div class="sec-label"><span class="chip c-sky"></span>用电 · ' + cnMonth(dispMk) + (dispMk === nowMk ? '（本月）' : '（最近有数据月）') + '</div>' +
+    '<div class="card hero">' +
+      '<div class="hero-top"><span class="hero-title">' + (dispMk === nowMk ? '本月用电量' : cnMonth(dispMk) + '用电量') + '</span>' + deltaHtml + '</div>' +
+      '<div class="hero-num">' + fk(dispKwh) + '<span class="unit">度</span></div>' +
+      '<div class="hero-grid">' +
+        '<div class="hero-cell"><div class="mini-label">日均用电（最近抄表区间）</div>' +
+          '<div class="mini-num" style="color:var(--sky-deep)">' + fk(lastIv.daily) + '<span class="u">度/天</span></div></div>' +
+        '<div class="hero-cell"><div class="mini-label">距上次抄表</div>' +
+          '<div class="mini-num" style="color:' + (sinceDays > 35 ? 'var(--pink-deep)' : 'var(--ink)') + '">' + sinceDays + '<span class="u">天</span></div></div>' +
+      '</div>' +
+    '</div>' +
+    tierHtml +
+    '<div class="sec-label"><span class="chip c-purple"></span>费用估算</div>' +
+    '<div class="duo">' +
+      '<div class="card stat-card"><div class="stat-label" style="color:var(--purple-deep)">' + icon('coins', 14) +
+        (dispMk === nowMk ? '本月估算电费' : cnMonth(dispMk) + '估算电费') + '</div>' +
+        '<div class="stat-num" style="color:var(--purple-deep)">' + fm(dispCost) + '<span class="u">元</span></div>' +
+        '<div class="stat-sub">按' + (s.pricingMode === 'tiered' ? '阶梯拆档' : '单一电价') + '计算</div></div>' +
+      '<div class="card stat-card"><div class="stat-label" style="color:var(--green-deep)">' + icon('wallet', 14) + '余额估算</div>' +
+        '<div class="stat-num" style="color:' + (C.balance < 0 ? 'var(--pink-deep)' : 'var(--green-deep)') + '">' +
+        fm(C.balance) + '<span class="u">元</span></div>' +
+        '<div class="stat-sub">缴费 ' + fm(C.totalPaid) + ' − 估算 ' + fm(C.totalCost) + '</div></div>' +
+    '</div>' +
+    remindHtml +
+    '<div class="qa-row">' +
+      '<button class="qa-btn sky" data-act="add-reading">' + icon('gauge', 17) + '记一笔读数</button>' +
+      '<button class="qa-btn green" data-act="add-payment">' + icon('banknote', 17) + '记一笔缴费</button>' +
+    '</div>';
+}
+
+/* ════════ Tab 2 · 记录 ════════ */
+let recordsSeg = 'readings';
+function renderRecords() {
+  const el = document.getElementById('screen-records');
+  const C = computeAll();
+  const rs = sortedReadings();
+  let listHtml = '';
+  if (recordsSeg === 'readings') {
+    if (rs.length === 0) {
+      listHtml = '<div class="card empty"><div class="empty-ico">' + icon('gauge', 26, '', '#0EA5E9') + '</div>' +
+        '<h3>还没有读数记录</h3><p>抄下电表上的数字，从这里开始。</p>' +
+        '<button class="qa-btn sky" style="width:100%" data-act="add-reading">' + icon('plus', 17) + '记一笔读数</button></div>';
+    } else {
+      const rows = rs.slice().reverse().map(r => {
+        const iv = C.intervals.find(v => v.toId === r.id);
+        let sub;
+        if (iv) {
+          const d = iv.negative
+            ? '<span style="color:var(--pink-deep)">读数回退（按 0 度计）</span>'
+            : '<span class="num" style="color:var(--sky-deep);font-weight:600">+' + fk(iv.kwh) + ' 度</span>';
+          sub = d + '<span class="num">间隔 ' + iv.days + ' 天</span>' +
+                '<span class="num" style="color:var(--purple-deep)">估算 ' + fm(C.intervalCost.get(r.id) || 0) + ' 元</span>';
+        } else {
+          sub = '<span>首次读数 · 作为表底</span>';
+        }
+        if (r.note) sub += '<span>' + esc(r.note) + '</span>';
+        return '<button class="row" data-edit-reading="' + r.id + '">' +
+          '<span class="row-dot c-sky" style="background:var(--sky)"></span>' +
+          '<span class="row-main"><span class="row-t">' + cnDate(r.date) + '</span>' +
+          '<span class="row-s">' + sub + '</span></span>' +
+          '<span class="row-end"><span class="row-v v-sky">' + fk(r.value) + '</span>' +
+          '<span class="row-vs">表读数 · 度</span></span></button>';
+      }).join('');
+      listHtml = '<div class="rows">' + rows + '</div>';
+    }
+  } else {
+    const ps = store.payments.slice().sort((a, b) => a.date < b.date ? 1 : -1);
+    if (ps.length === 0) {
+      listHtml = '<div class="card empty"><div class="empty-ico" style="background:var(--green-soft)">' + icon('banknote', 26, '', '#10B981') + '</div>' +
+        '<h3>还没有缴费记录</h3><p>记下每次充值/缴费，自动估算余额。</p>' +
+        '<button class="qa-btn green" style="width:100%;border:none;background:var(--green);color:#fff" data-act="add-payment">' + icon('plus', 17) + '记一笔缴费</button></div>';
+    } else {
+      const rows = ps.map(p =>
+        '<button class="row" data-edit-payment="' + p.id + '">' +
+          '<span class="row-dot" style="background:var(--green)"></span>' +
+          '<span class="row-main"><span class="row-t">' + cnDate(p.date) + '</span>' +
+          '<span class="row-s"><span>' + (p.note ? esc(p.note) : '缴费') + '</span></span></span>' +
+          '<span class="row-end"><span class="row-v v-green">+' + fm(p.amount) + '</span>' +
+          '<span class="row-vs">缴费 · 元</span></span></button>').join('');
+      listHtml = '<div class="rows">' + rows + '</div>';
+    }
+  }
+  el.innerHTML =
+    '<div class="seg">' +
+      '<button class="' + (recordsSeg === 'readings' ? 'on t-sky' : '') + '" data-seg="readings">' + icon('gauge', 15) + '电表读数</button>' +
+      '<button class="' + (recordsSeg === 'payments' ? 'on t-green' : '') + '" data-seg="payments">' + icon('banknote', 15) + '缴费记录</button>' +
+    '</div>' +
+    '<div style="height:12px"></div>' + listHtml;
+}
+</script>
+<script>
+'use strict';
+/* ════════ Tab 3 · 趋势（纯内联 SVG 柱状图） ════════ */
+let trendMode = 'kwh';      // 'kwh' | 'cost'
+let trendSel = null;        // 选中的月份 key
+function last12Months() {
+  const now = new Date();
+  const out = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    out.push(fmtDate(d).slice(0, 7));
+  }
+  return out;
+}
+function renderTrends() {
+  const el = document.getElementById('screen-trends');
+  const C = computeAll();
+  const months = last12Months();
+  const isKwh = trendMode === 'kwh';
+  const vals = months.map(mk => isKwh ? (C.kwhByMonth.get(mk) || 0) : (C.costByMonth.get(mk) || 0));
+  const hasAny = vals.some(v => v > 0.05);
+  const color = isKwh ? '#0EA5E9' : '#A855F7';
+  const colorSoft = isKwh ? '#BAE6FD' : '#E9D5FF';
+  const colorDeep = isKwh ? '#0284C7' : '#9333EA';
+
+  // ── SVG 手绘柱状图 ──
+  const W = 358, H = 210, padL = 34, padR = 6, padT = 14, padB = 26;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const maxV = Math.max(...vals, 1);
+  // y 轴刻度取整
+  const step = niceStep(maxV / 3);
+  const yMax = Math.ceil(maxV / step) * step || step;
+  let svg = '<svg class="chart-svg" viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">';
+  svg += '<defs><linearGradient id="gsel" x1="0" y1="0" x2="0" y2="1">' +
+    '<stop offset="0" stop-color="' + (isKwh ? '#38BDF8' : '#C084FC') + '"/>' +
+    '<stop offset="1" stop-color="' + colorDeep + '"/></linearGradient></defs>';
+  // 网格与 y 轴标签
+  for (let g = 0; g <= 3; g++) {
+    const v = yMax / 3 * g;
+    const y = padT + plotH - (v / yMax) * plotH;
+    svg += '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y +
+      '" stroke="#E2E8F0" stroke-width="1"' + (g === 0 ? '' : ' stroke-dasharray="3 4"') + '/>';
+    svg += '<text x="' + (padL - 6) + '" y="' + (y + 3.5) + '" text-anchor="end" font-size="9" ' +
+      'font-family="JetBrains Mono,monospace" fill="#94A3B8">' + (v >= 1000 ? (v / 1000) + 'k' : Math.round(v)) + '</text>';
+  }
+  // 柱子
+  const bw = Math.min(18, plotW / 12 * 0.55);
+  months.forEach((mk, i) => {
+    const cx = padL + plotW / 12 * (i + 0.5);
+    const v = vals[i];
+    const has = v > 0.05;
+    const bh = has ? Math.max(3, (v / yMax) * plotH) : 3;
+    const y = padT + plotH - bh;
+    const sel = trendSel === mk;
+    const fill = !has ? '#E2E8F0' : sel ? 'url(#gsel)' : colorSoft;
+    svg += '<g class="bar" data-mk="' + mk + '">' +
+      '<rect x="' + (cx - plotW / 24) + '" y="' + padT + '" width="' + (plotW / 12) + '" height="' + plotH + '" fill="transparent"/>' +
+      '<rect x="' + (cx - bw / 2) + '" y="' + y.toFixed(1) + '" width="' + bw + '" height="' + bh.toFixed(1) +
+      '" rx="3.5" fill="' + fill + '"' + (has && !sel ? ' stroke="' + color + '" stroke-opacity=".35" stroke-width="1"' : '') + '/>' +
+      '</g>';
+    // 月份标签
+    const m = Number(mk.slice(5));
+    const lbl = m === 1 ? mk.slice(2, 4) + "'1" : String(m);
+    svg += '<text x="' + cx + '" y="' + (H - 8) + '" text-anchor="middle" font-size="9" ' +
+      'font-family="JetBrains Mono,monospace" font-weight="' + (trendSel === mk ? '700' : '400') + '" fill="' +
+      (trendSel === mk ? colorDeep : '#94A3B8') + '">' + lbl + '</text>';
+  });
+  svg += '</svg>';
+
+  // ── 点选月份明细 ──
+  let detail = '';
+  if (trendSel) {
+    const k = C.kwhByMonth.get(trendSel) || 0;
+    const c = C.costByMonth.get(trendSel) || 0;
+    const dys = C.daysByMonth.get(trendSel) || 0;
+    detail = '<div class="chart-detail"><div class="cd-grid">' +
+      '<div class="cd-cell"><div class="mini-label">月份</div><div class="mini-num num" style="font-size:14px;padding-top:3px">' + cnMonth(trendSel) + '</div></div>' +
+      '<div class="cd-cell"><div class="mini-label">用电</div><div class="mini-num" style="color:var(--sky-deep)">' + fk(k) + '<span class="u">度</span></div></div>' +
+      '<div class="cd-cell"><div class="mini-label">估算费用</div><div class="mini-num" style="color:var(--purple-deep)">' + fm(c) + '<span class="u">元</span></div></div>' +
+      '<div class="cd-cell"><div class="mini-label">日均</div><div class="mini-num">' + (dys > 0 ? fk(k / dys) : '0.0') + '<span class="u">度/天</span></div></div>' +
+      '</div></div>';
+  } else if (hasAny) {
+    detail = '<div class="chart-detail" style="text-align:center;font-size:11.5px;color:var(--faint)">点击柱子查看该月明细</div>';
+  }
+
+  // ── 12 个月合计 ──
+  const dataMonths = months.filter(mk => (C.kwhByMonth.get(mk) || 0) > 0.05);
+  const totK = months.reduce((a, mk) => a + (C.kwhByMonth.get(mk) || 0), 0);
+  const totC = months.reduce((a, mk) => a + (C.costByMonth.get(mk) || 0), 0);
+  const avg = dataMonths.length ? (isKwh ? totK : totC) / dataMonths.length : 0;
+
+  el.innerHTML =
+    '<div class="seg">' +
+      '<button class="' + (isKwh ? 'on t-sky' : '') + '" data-mode="kwh">' + icon('zap', 15) + '用电量（度）</button>' +
+      '<button class="' + (!isKwh ? 'on t-purple' : '') + '" data-mode="cost">' + icon('coins', 15) + '费用（元）</button>' +
+    '</div>' +
+    '<div class="sec-label"><span class="chip ' + (isKwh ? 'c-sky' : 'c-purple') + '"></span>近 12 个月 · ' + (isKwh ? '月度用电量' : '月度估算费用') + '</div>' +
+    '<div class="card chart-card">' +
+      (hasAny ? svg + detail :
+        '<div class="empty" style="padding:28px 16px"><div class="empty-ico" style="background:var(--purple-soft)">' + icon('trend', 24, '', '#A855F7') + '</div>' +
+        '<h3>暂无趋势数据</h3><p>记录两次以上电表读数后，<br>这里会画出近 12 个月的用电柱状图。</p>' +
+        '<button class="qa-btn sky" style="width:100%" data-act="add-reading">' + icon('plus', 17) + '记一笔读数</button></div>') +
+    '</div>' +
+    (hasAny ?
+      '<div class="card tri-stats" >' +
+        '<div><div class="mini-label">12 个月总用电</div><div class="mini-num" style="color:var(--sky-deep)">' + fk(totK) + '<span class="u">度</span></div></div>' +
+        '<div><div class="mini-label">总费用</div><div class="mini-num" style="color:var(--purple-deep)">' + fm(totC) + '<span class="u">元</span></div></div>' +
+        '<div><div class="mini-label">月均' + (isKwh ? '用电' : '费用') + '</div><div class="mini-num">' + (isKwh ? fk(avg) : fm(avg)) +
+          '<span class="u">' + (isKwh ? '度' : '元') + '</span></div></div>' +
+      '</div>' : '');
+}
+function niceStep(x) {
+  if (x <= 0) return 50;
+  const pow = Math.pow(10, Math.floor(Math.log10(x)));
+  const f = x / pow;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * pow;
+}
+
+/* ════════ Tab 4 · 设置 ════════ */
+let clearArmed = false;
+function renderSettings() {
+  const el = document.getElementById('screen-settings');
+  const s = store.settings;
+  const tiered = s.pricingMode === 'tiered';
+  let tierRows = '';
+  if (tiered) {
+    tierRows = s.tiers.map((t, i) => {
+      const isLast = i === s.tiers.length - 1;
+      const lower = i === 0 ? 0 : Number(s.tiers[i - 1].limit) || 0;
+      return '<div class="tier-row">' +
+        '<span class="tn">第' + '一二三四五六'[i] + '档</span>' +
+        '<span class="sep num">&gt;' + lower + '</span>' +
+        (isLast
+          ? '<span class="sep" style="flex:1;text-align:center;color:var(--faint)">以上不限</span>'
+          : '<input class="inp grow" type="number" inputmode="decimal" value="' + t.limit + '" data-tier-limit="' + i + '" aria-label="档位上限">') +
+        '<span class="sep">度 ×</span>' +
+        '<input class="inp sm" type="number" inputmode="decimal" step="0.0001" value="' + t.price + '" data-tier-price="' + i + '" aria-label="电价">' +
+        '<span class="sep">元</span>' +
+        (s.tiers.length > 1 && !isLast
+          ? '<button class="icon-btn" data-tier-del="' + i + '" aria-label="删除档位">' + icon('trash', 15) + '</button>'
+          : '<span style="width:34px;flex:none"></span>') +
+        '</div>';
+    }).join('');
+    tierRows += '<div class="tier-row"><button class="set-row link-row" style="padding:2px 0;min-height:36px;color:var(--orange-deep);font-weight:600" data-act="tier-add">' +
+      icon('plus', 15, 'lead') + '<span style="margin-left:8px">添加档位</span></button></div>';
+  }
+  el.innerHTML =
+    '<div class="sec-label"><span class="chip c-orange"></span>电价模式</div>' +
+    '<div class="card set-card">' +
+      '<div class="set-row" style="cursor:pointer" data-mode-set="tiered"><span class="radio' + (tiered ? ' on' : '') + '"></span>' +
+        '<span class="grow"><div class="lbl">阶梯电价</div><div class="hint">按累计用电量分档计价（默认）</div></span></div>' +
+      '<div class="set-row" style="cursor:pointer" data-mode-set="flat"><span class="radio' + (!tiered ? ' on' : '') + '"></span>' +
+        '<span class="grow"><div class="lbl">单一电价</div><div class="hint">所有电量按同一单价</div></span>' +
+        (!tiered ? '<input class="inp sm" type="number" inputmode="decimal" step="0.0001" value="' + s.flatPrice + '" id="flatPriceInp" aria-label="单一电价"><span class="sep">元/度</span>' : '') +
+      '</div>' +
+    '</div>' +
+    (tiered ?
+      '<div class="sec-label"><span class="chip c-orange"></span>阶梯表（累计上限 · 元/度）</div>' +
+      '<div class="card">' + tierRows + '</div>' +
+      '<div class="sec-label"><span class="chip c-orange"></span>阶梯周期</div>' +
+      '<div class="card set-row" style="border-radius:12px"><span class="grow"><div class="lbl">累计清零周期</div>' +
+        '<div class="hint">' + (s.tierPeriod === 'year' ? '每年 1 月 1 日累计清零' : '每月 1 日累计清零') + '</div></span>' +
+        '<div class="seg2"><button class="' + (s.tierPeriod === 'year' ? 'on' : '') + '" data-period="year">按年</button>' +
+        '<button class="' + (s.tierPeriod === 'month' ? 'on' : '') + '" data-period="month">按月</button></div></div>'
+      : '') +
+    '<div class="sec-label"><span class="chip c-slate"></span>数据管理</div>' +
+    (store.meta.demo ? '<div class="notice slate" style="margin-bottom:10px;border-color:#FDE68A;background:#FFFBEB;color:var(--orange-deep)">' +
+      icon('info', 16) + '<span>当前为<b>示例数据</b>（' + store.readings.length + ' 条读数 · ' + store.payments.length + ' 笔缴费）。「清空全部数据」即可重来。</span></div>' : '') +
+    '<div class="card set-card">' +
+      '<button class="set-row link-row" data-act="export">' + icon('download', 18, 'lead') +
+        '<span class="grow lbl">导出 JSON</span>' + icon('chevron', 16, 'lead') + '</button>' +
+      '<button class="set-row link-row" data-act="import">' + icon('upload', 18, 'lead') +
+        '<span class="grow lbl">导入 JSON</span>' + icon('chevron', 16, 'lead') + '</button>' +
+      '<button class="set-row link-row" data-act="demo">' + icon('database', 18, 'lead') +
+        '<span class="grow lbl">载入示例数据</span>' + icon('chevron', 16, 'lead') + '</button>' +
+      '<button class="set-row link-row danger' + (clearArmed ? ' confirm' : '') + '" data-act="clear">' + icon('trash', 18, 'lead') +
+        '<span class="grow lbl">' + (clearArmed ? '再点一次确认清空（不可恢复）' : '清空全部数据') + '</span>' + icon('chevron', 16, 'lead') + '</button>' +
+    '</div>' +
+    '<div class="sec-label"><span class="chip c-slate"></span>关于</div>' +
+    '<div class="card about">' + icon('shield', 16, '', '#94A3B8') +
+      '<div style="margin-top:6px">电费记账本是一个纯本地工具：<b>数据仅保存在本机浏览器中</b>（localStorage · elec.v1），' +
+      '无后端、无账号、无网络依赖。所有电费均为按读数与电价规则的估算值，以供电公司账单为准。</div></div>';
+}
+</script>
+<script>
+'use strict';
+/* ════════ 全量渲染 ════════ */
+function updateDemoBadge() {
+  document.getElementById('demoBadge').classList.toggle('hidden', !store.meta.demo);
+}
+function renderAll() {
+  renderOverview(); renderRecords(); renderTrends(); renderSettings(); updateDemoBadge();
+}
+
+/* ════════ toast ════════ */
+let toastTimer = null;
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+/* ════════ 底部弹层 ════════ */
+let editingReading = null, editingPayment = null, forceArmed = false;
+const overlay = document.getElementById('overlay');
+function openSheet(id) {
+  overlay.classList.add('open');
+  document.getElementById(id).classList.add('open');
+}
+function closeSheets() {
+  overlay.classList.remove('open');
+  document.querySelectorAll('.sheet.open').forEach(s => s.classList.remove('open'));
+  forceArmed = false;
+  const btn = document.getElementById('rd-save');
+  btn.textContent = '保存读数'; btn.classList.remove('force');
+  document.getElementById('rd-warn').classList.remove('show');
+  document.getElementById('pm-warn').classList.remove('show');
+}
+function openReadingSheet(id) {
+  editingReading = id ? store.readings.find(r => r.id === id) || null : null;
+  document.getElementById('rd-title').textContent = editingReading ? '编辑读数' : '记一笔读数';
+  document.getElementById('rd-date').value = editingReading ? editingReading.date : todayStr();
+  document.getElementById('rd-value').value = editingReading ? editingReading.value : '';
+  document.getElementById('rd-note').value = editingReading ? (editingReading.note || '') : '';
+  document.getElementById('rd-del').classList.toggle('hidden', !editingReading);
+  openSheet('sheet-reading');
+  if (!editingReading) setTimeout(() => document.getElementById('rd-value').focus(), 280);
+}
+function openPaymentSheet(id) {
+  editingPayment = id ? store.payments.find(p => p.id === id) || null : null;
+  document.getElementById('pm-title').textContent = editingPayment ? '编辑缴费' : '记一笔缴费';
+  document.getElementById('pm-date').value = editingPayment ? editingPayment.date : todayStr();
+  document.getElementById('pm-value').value = editingPayment ? editingPayment.amount : '';
+  document.getElementById('pm-note').value = editingPayment ? (editingPayment.note || '') : '';
+  document.getElementById('pm-del').classList.toggle('hidden', !editingPayment);
+  openSheet('sheet-payment');
+  if (!editingPayment) setTimeout(() => document.getElementById('pm-value').focus(), 280);
+}
+function saveReading() {
+  const date = document.getElementById('rd-date').value;
+  const raw = document.getElementById('rd-value').value;
+  const note = document.getElementById('rd-note').value.trim();
+  const warn = document.getElementById('rd-warn');
+  const warnText = document.getElementById('rd-warn-text');
+  const btn = document.getElementById('rd-save');
+  const value = parseFloat(raw);
+  if (!date) { warnText.textContent = '请选择日期。'; warn.classList.add('show'); return; }
+  if (raw === '' || isNaN(value) || value < 0) {
+    warnText.textContent = '请输入有效的电表读数（≥ 0）。'; warn.classList.add('show'); return;
+  }
+  // 校验：新读数小于「上一次」读数 → 警告，允许强制保存（换表场景）
+  const prev = sortedReadings().filter(r => r.date <= date && (!editingReading || r.id !== editingReading.id)).pop();
+  if (prev && value < prev.value && !forceArmed) {
+    warnText.innerHTML = '新读数 <b class="num">' + fk(value) + '</b> 小于上一次（' + cnDate(prev.date) +
+      '）的 <b class="num">' + fk(prev.value) + '</b>。电表不会倒走——若确因换表，请再点一次「强制保存」。';
+    warn.classList.add('show');
+    btn.textContent = '强制保存'; btn.classList.add('force');
+    forceArmed = true;
+    return;
+  }
+  if (editingReading) {
+    editingReading.date = date; editingReading.value = value; editingReading.note = note;
+  } else {
+    store.readings.push({ id: uid('r'), date, value, note });
+  }
+  save(); closeSheets(); renderAll(); toast(editingReading ? '读数已更新' : '读数已保存');
+}
+function savePayment() {
+  const date = document.getElementById('pm-date').value;
+  const raw = document.getElementById('pm-value').value;
+  const note = document.getElementById('pm-note').value.trim();
+  const warn = document.getElementById('pm-warn');
+  const warnText = document.getElementById('pm-warn-text');
+  const amount = parseFloat(raw);
+  if (!date) { warnText.textContent = '请选择日期。'; warn.classList.add('show'); return; }
+  if (raw === '' || isNaN(amount) || amount <= 0) {
+    warnText.textContent = '请输入大于 0 的缴费金额。'; warn.classList.add('show'); return;
+  }
+  if (editingPayment) {
+    editingPayment.date = date; editingPayment.amount = amount; editingPayment.note = note;
+  } else {
+    store.payments.push({ id: uid('p'), date, amount, note });
+  }
+  save(); closeSheets(); renderAll(); toast(editingPayment ? '缴费已更新' : '缴费已保存');
+}
+
+/* ════════ 数据管理 ════════ */
+function exportJSON() {
+  const blob = new Blob([JSON.stringify(store, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = '电费记账本-' + todayStr().replace(/-/g, '') + '.json';
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 400);
+  toast('已导出 JSON');
+}
+function importJSON(file) {
+  const fr = new FileReader();
+  fr.onload = () => {
+    try {
+      const d = JSON.parse(fr.result);
+      if (!d || !Array.isArray(d.readings) || !Array.isArray(d.payments)) throw new Error('bad');
+      store = {
+        settings: Object.assign({}, DEFAULT_SETTINGS, d.settings || {}),
+        readings: d.readings.filter(r => r && r.date && isFinite(r.value))
+          .map(r => ({ id: r.id || uid('r'), date: r.date, value: Number(r.value), note: r.note || '' })),
+        payments: d.payments.filter(p => p && p.date && isFinite(p.amount))
+          .map(p => ({ id: p.id || uid('p'), date: p.date, amount: Number(p.amount), note: p.note || '' })),
+        meta: { demo: !!(d.meta && d.meta.demo) }
+      };
+      save(); renderAll();
+      toast('导入成功：' + store.readings.length + ' 条读数 · ' + store.payments.length + ' 笔缴费');
+    } catch (e) { toast('导入失败：不是有效的备份 JSON'); }
+  };
+  fr.readAsText(file);
+}
+
+/* ════════ 事件委托 ════════ */
+let clearTimer = null;
+document.addEventListener('click', e => {
+  const q = sel => e.target.closest(sel);
+  let n;
+  if (q('[data-close]')) { closeSheets(); return; }
+  if ((n = q('[data-act]'))) {
+    const act = n.getAttribute('data-act');
+    if (act === 'add-reading') openReadingSheet(null);
+    else if (act === 'add-payment') openPaymentSheet(null);
+    else if (act === 'export') exportJSON();
+    else if (act === 'import') document.getElementById('importFile').click();
+    else if (act === 'demo') { loadDemo(); renderAll(); toast('已载入示例数据'); }
+    else if (act === 'tier-add') {
+      const t = store.settings.tiers;
+      const prevLimit = t.length >= 2 ? Number(t[t.length - 2].limit) || 0 : 0;
+      const lastPrice = Number(t[t.length - 1].price) || 0.5;
+      t.splice(t.length - 1, 0, { limit: prevLimit + 2000, price: Math.round((lastPrice) * 10000) / 10000 });
+      save(); renderAll();
+    }
+    else if (act === 'clear') {
+      if (!clearArmed) {
+        clearArmed = true; renderSettings();
+        clearTimeout(clearTimer);
+        clearTimer = setTimeout(() => { clearArmed = false; renderSettings(); }, 3500);
+      } else {
+        clearTimeout(clearTimer); clearArmed = false;
+        clearAll(); renderAll(); toast('已清空全部数据');
+      }
+    }
+    return;
+  }
+  if ((n = q('[data-edit-reading]'))) { openReadingSheet(n.getAttribute('data-edit-reading')); return; }
+  if ((n = q('[data-edit-payment]'))) { openPaymentSheet(n.getAttribute('data-edit-payment')); return; }
+  if ((n = q('[data-seg]'))) { recordsSeg = n.getAttribute('data-seg'); renderRecords(); return; }
+  if ((n = q('[data-mode]'))) { trendMode = n.getAttribute('data-mode'); renderTrends(); return; }
+  if ((n = q('.bar[data-mk]'))) {
+    const mk = n.getAttribute('data-mk');
+    trendSel = (trendSel === mk) ? null : mk;
+    renderTrends(); return;
+  }
+  if ((n = q('[data-mode-set]'))) {
+    if (e.target.tagName === 'INPUT') return; // 点在输入框上不切换模式
+    const m = n.getAttribute('data-mode-set');
+    if (store.settings.pricingMode !== m) { store.settings.pricingMode = m; save(); renderAll(); }
+    return;
+  }
+  if ((n = q('[data-period]'))) {
+    store.settings.tierPeriod = n.getAttribute('data-period'); save(); renderAll(); return;
+  }
+  if ((n = q('[data-tier-del]'))) {
+    store.settings.tiers.splice(Number(n.getAttribute('data-tier-del')), 1);
+    save(); renderAll(); return;
+  }
+});
+document.addEventListener('change', e => {
+  const t = e.target;
+  if (t.id === 'importFile') {
+    if (t.files && t.files[0]) importJSON(t.files[0]);
+    t.value = '';
+    return;
+  }
+  if (t.id === 'flatPriceInp') {
+    const v = parseFloat(t.value);
+    if (isFinite(v) && v > 0) { store.settings.flatPrice = v; save(); renderAll(); toast('电价已更新'); }
+    else renderSettings();
+    return;
+  }
+  if (t.hasAttribute && t.hasAttribute('data-tier-limit')) {
+    const i = Number(t.getAttribute('data-tier-limit'));
+    const v = parseFloat(t.value);
+    if (isFinite(v) && v > 0) { store.settings.tiers[i].limit = v; save(); renderAll(); toast('阶梯表已更新'); }
+    else renderSettings();
+    return;
+  }
+  if (t.hasAttribute && t.hasAttribute('data-tier-price')) {
+    const i = Number(t.getAttribute('data-tier-price'));
+    const v = parseFloat(t.value);
+    if (isFinite(v) && v >= 0) { store.settings.tiers[i].price = v; save(); renderAll(); toast('阶梯表已更新'); }
+    else renderSettings();
+    return;
+  }
+});
+overlay.addEventListener('click', closeSheets);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheets(); });
+document.getElementById('rd-save').addEventListener('click', saveReading);
+document.getElementById('pm-save').addEventListener('click', savePayment);
+document.getElementById('rd-del').addEventListener('click', () => {
+  if (editingReading) {
+    store.readings = store.readings.filter(r => r.id !== editingReading.id);
+    save(); closeSheets(); renderAll(); toast('读数已删除');
+  }
+});
+document.getElementById('pm-del').addEventListener('click', () => {
+  if (editingPayment) {
+    store.payments = store.payments.filter(p => p.id !== editingPayment.id);
+    save(); closeSheets(); renderAll(); toast('缴费已删除');
+  }
+});
+// 输入时清除强制保存状态（改了值需重新校验）
+document.getElementById('rd-value').addEventListener('input', () => {
+  forceArmed = false;
+  const btn = document.getElementById('rd-save');
+  btn.textContent = '保存读数'; btn.classList.remove('force');
+  document.getElementById('rd-warn').classList.remove('show');
+});
+document.getElementById('fab').addEventListener('click', () => {
+  if (recordsSeg === 'payments') openPaymentSheet(null); else openReadingSheet(null);
+});
+
+/* ════════ hash 路由 ════════ */
+const TABS = ['overview', 'records', 'trends', 'settings'];
+function currentTab() {
+  const h = location.hash.replace('#', '');
+  return TABS.includes(h) ? h : 'overview';
+}
+function setTab() {
+  const tab = currentTab();
+  document.querySelectorAll('.tab').forEach(a => a.classList.toggle('on', a.dataset.tab === tab));
+  TABS.forEach(t => document.getElementById('screen-' + t).classList.toggle('active', t === tab));
+  document.getElementById('fab').classList.toggle('hidden', tab !== 'records');
+  window.scrollTo(0, 0);
+}
+window.addEventListener('hashchange', setTab);
+
+/* ════════ 启动 ════════ */
+(function init() {
+  // ?demo=1：仅在空库或已是示例数据时载入（assumption 4）
+  const params = new URLSearchParams(location.search);
+  if (params.get('demo') === '1') {
+    const empty = store.readings.length === 0 && store.payments.length === 0;
+    if (empty || store.meta.demo) loadDemo();
+  }
+  if (!location.hash) {
+    try { history.replaceState(null, '', '#overview'); } catch (e) { location.hash = '#overview'; }
+  }
+  renderAll();
+  setTab();
+})();
+</script>
+</body>
+</html>

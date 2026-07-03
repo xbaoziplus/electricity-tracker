@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<!--
+═══════════════════════════════════════════════════════════════════════
+ 电费记账本 · reference.html
+ 本版设计逻辑：现实参照（标杆迁移）
+───────────────────────────────────────────────────────────────────────
+ 参照对象：Copilot Money（copilot.money，iOS 个人理财追踪 App）
+ 核实到的事实（2026-07 WebSearch 核实，非凭记忆）：
+   · Apple Design Award 2024 Finalist（App Store 页面自标注）
+   · App Store Editors' Choice 获得者
+   · 被 Apple 官方开发者文章专文报道其 Swift Charts 现金流图表设计
+   · 多家评测（Finny/Pocket Clear/Thalvi 2026）称其为
+     「个人理财类设计第一」「ex-Apple 设计师打造、每屏每动效打磨到位」
+     「typography / motion / color / information density 全部经过推敲」
+   · 深色模式是其视觉身份核心；2026 年完成 Liquid Glass 设计翻新
+───────────────────────────────────────────────────────────────────────
+ 迁移的设计骨相（学层级与哲学，不抄皮）：
+   1. 数字绝对主角：超大圆润数字 + tabular-nums，单位小一号弱化，
+      涨跌用彩色小胶囊 chip（Copilot 的 spend delta 手法）
+   2. 深墨蓝底 + 双类目色系统：用电=琥珀（电流色），缴费=天蓝，
+      对应 Copilot 的 category color 体系（自定义色板，非其品牌色）
+   3. Swift Charts 式柱状图：圆顶柱、选中高亮、其余降灰、点选出明细
+   4. 预算进度条哲学 → 阶梯档位进度条（距下一档还剩 X 度）
+   5. 大标题页头 + 高密度圆角卡片、hairline 分隔的原生 iOS 质感
+───────────────────────────────────────────────────────────────────────
+ 关键 assumptions：
+   · 读数出现回退（换表）时该区间无法推算用量，计算中跳过该区间
+   · 「本月」无分摊数据时，总览回退展示最近一个有数据的自然月并如实标注
+   · 区间估算电费 = 区间电量按天分摊进各月后，按各月平均单价加权求和
+   · 字体：Manrope（Google Fonts，数字），中文走系统栈 PingFang SC /
+     Microsoft YaHei；离线打开时系统栈兜底，功能不受影响
+═══════════════════════════════════════════════════════════════════════
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0B0F17">
+<title>电费记账本</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0B0F17; --bg-deep:#05070C;
+  --surface:#141B28; --surface-2:#1A2333; --field:#0F1520;
+  --line:rgba(255,255,255,.07); --line-strong:rgba(255,255,255,.12);
+  --text:#F2F5F9; --text-2:#97A3B6; --text-3:#5D6A7E;
+  --amber:#FFC53D; --amber-soft:rgba(255,197,61,.14); --amber-deep:#1C1503;
+  --sky:#5CA8FF; --sky-soft:rgba(92,168,255,.14);
+  --mint:#3ECF8E; --mint-soft:rgba(62,207,142,.13);
+  --coral:#FF6B6B; --coral-soft:rgba(255,107,107,.13);
+  --bar-dim:#28324A;
+  --r-card:20px; --r-btn:14px;
+  --font-num:"Manrope",-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei",sans-serif;
+  --font-ui:-apple-system,BlinkMacSystemFont,"SF Pro Text","Manrope","PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{-webkit-text-size-adjust:100%}
+body{background:var(--bg-deep);color:var(--text);font-family:var(--font-ui);font-size:15px;line-height:1.45}
+.num,.big-num,.chip,.mini-val,.row-val,.row-sub b,.stat-v,.tier-price,input[type=number]{font-family:var(--font-num);font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+.app{max-width:430px;margin:0 auto;min-height:100dvh;background:var(--bg);position:relative;
+  box-shadow:1px 0 0 var(--line),-1px 0 0 var(--line)}
+main{padding:0 20px calc(96px + env(safe-area-inset-bottom))}
+.view{display:none;animation:fadein .18s ease}
+.view.active{display:block}
+@keyframes fadein{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+/* ── 页头 ── */
+.page-head{padding:calc(18px + env(safe-area-inset-top)) 0 14px}
+.page-head h1{font-size:28px;font-weight:800;letter-spacing:-.02em}
+.page-head .sub{color:var(--text-2);font-size:13px;margin-top:3px}
+.head-row{display:flex;align-items:flex-end;justify-content:space-between}
+.head-row .icon-btn{margin-bottom:2px}
+/* ── 卡片 ── */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);padding:18px;margin-bottom:14px}
+.card .card-label{font-size:12px;font-weight:600;color:var(--text-2);letter-spacing:.04em;display:flex;align-items:center;gap:6px}
+.card .card-label svg{width:14px;height:14px}
+/* ── 大数字 ── */
+.big-num{font-size:46px;font-weight:800;letter-spacing:-.03em;line-height:1.05;margin-top:8px}
+.big-num .unit{font-size:16px;font-weight:600;color:var(--text-2);letter-spacing:0;margin-left:4px}
+.big-num.amber{color:var(--amber)}
+.big-num.money{font-size:38px}
+.big-num.mint{color:var(--mint)} .big-num.coral{color:var(--coral)}
+/* ── chip ── */
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:700;padding:4px 9px;border-radius:99px;vertical-align:middle}
+.chip svg{width:11px;height:11px}
+.chip.up{background:var(--coral-soft);color:var(--coral)}
+.chip.down{background:var(--mint-soft);color:var(--mint)}
+.chip.flat{background:rgba(255,255,255,.07);color:var(--text-2)}
+.chip.warn{background:var(--amber-soft);color:var(--amber)}
+.chip.demo{background:var(--sky-soft);color:var(--sky)}
+/* ── 迷你统计对 ── */
+.mini-grid{display:grid;grid-template-columns:1fr 1fr;gap:0;margin-top:16px;border-top:1px solid var(--line);padding-top:14px}
+.mini-grid .mini:first-child{border-right:1px solid var(--line);padding-right:14px}
+.mini-grid .mini:last-child{padding-left:14px}
+.mini-k{font-size:12px;color:var(--text-2)}
+.mini-val{font-size:20px;font-weight:800;margin-top:3px}
+.mini-val .unit{font-size:12px;font-weight:600;color:var(--text-3);margin-left:2px}
+/* ── 阶梯进度 ── */
+.tier-head{display:flex;align-items:center;justify-content:space-between;margin-top:10px}
+.tier-badge{display:inline-flex;align-items:center;gap:6px;background:var(--amber-soft);color:var(--amber);font-size:13px;font-weight:700;padding:5px 11px;border-radius:99px}
+.tier-badge svg{width:13px;height:13px}
+.tier-price{font-size:20px;font-weight:800}
+.tier-price .unit{font-size:12px;font-weight:600;color:var(--text-2)}
+.progress{height:8px;background:#232C3D;border-radius:99px;margin-top:14px;overflow:hidden}
+.progress i{display:block;height:100%;background:var(--amber);border-radius:99px;transition:width .4s ease}
+.progress i.full{background:var(--coral)}
+.progress-notes{display:flex;justify-content:space-between;margin-top:8px;font-size:12px;color:var(--text-2)}
+.progress-notes b{color:var(--text);font-weight:700}
+/* ── 按钮 ── */
+.btn{display:flex;align-items:center;justify-content:center;gap:8px;min-height:52px;border:none;border-radius:var(--r-btn);font-size:15px;font-weight:700;font-family:var(--font-ui);cursor:pointer;width:100%;transition:filter .15s,transform .05s}
+.btn:active{transform:scale(.98);filter:brightness(1.12)}
+.btn svg{width:18px;height:18px}
+.btn-amber{background:var(--amber);color:var(--amber-deep)}
+.btn-sky{background:var(--sky-soft);color:#8CC3FF}
+.btn-ghost{background:rgba(255,255,255,.06);color:var(--text)}
+.btn-danger{background:var(--coral-soft);color:var(--coral)}
+.btn-danger-solid{background:var(--coral);color:#2A0808}
+.quick-actions{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
+.icon-btn{width:44px;height:44px;border-radius:14px;border:1px solid var(--line);background:var(--surface);color:var(--text);display:flex;align-items:center;justify-content:center;cursor:pointer}
+.icon-btn svg{width:19px;height:19px}
+.icon-btn:active{background:var(--surface-2)}
+/* ── 元信息行 ── */
+.meta-row{display:flex;align-items:center;gap:8px;color:var(--text-2);font-size:13px;padding:2px 4px 14px}
+.meta-row svg{width:14px;height:14px;flex:none}
+/* ── 分段控件 ── */
+.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--field);border:1px solid var(--line);border-radius:12px;padding:3px;margin-bottom:14px}
+.seg button{min-height:38px;border:none;border-radius:9px;background:transparent;color:var(--text-2);font-size:13.5px;font-weight:600;font-family:var(--font-ui);cursor:pointer}
+.seg button.on{background:var(--surface-2);color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.35)}
+/* ── 列表 ── */
+.list{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;margin-bottom:14px}
+.row{display:flex;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid var(--line);cursor:pointer;min-height:44px}
+.row:last-child{border-bottom:none}
+.row:active{background:var(--surface-2)}
+.row-ico{width:36px;height:36px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex:none}
+.row-ico svg{width:17px;height:17px}
+.row-ico.amber{background:var(--amber-soft);color:var(--amber)}
+.row-ico.sky{background:var(--sky-soft);color:var(--sky)}
+.row-main{flex:1;min-width:0}
+.row-title{font-size:15px;font-weight:700}
+.row-sub{font-size:12px;color:var(--text-2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row-sub b{color:var(--text-2);font-weight:600}
+.row-right{text-align:right;flex:none}
+.row-val{font-size:16px;font-weight:800}
+.row-val.amber{color:var(--amber)} .row-val.sky{color:#8CC3FF}
+.row-val .unit{font-size:11px;font-weight:600;color:var(--text-3);margin-left:1px}
+.row-note{font-size:11px;color:var(--text-3);margin-top:2px;max-width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-left:auto}
+/* ── 空状态 ── */
+.empty{padding:44px 24px;text-align:center}
+.empty .eico{width:64px;height:64px;border-radius:22px;background:var(--amber-soft);color:var(--amber);display:flex;align-items:center;justify-content:center;margin:0 auto 16px}
+.empty .eico svg{width:28px;height:28px}
+.empty h3{font-size:17px;font-weight:800}
+.empty p{color:var(--text-2);font-size:13.5px;margin:7px 0 20px;line-height:1.6}
+.empty .btn{max-width:220px;margin:0 auto}
+/* ── 图表 ── */
+.chart-wrap{margin:4px -2px 0}
+.chart-wrap svg{width:100%;height:auto;display:block}
+.bar-hit{cursor:pointer}
+.detail-panel{border-top:1px solid var(--line);margin-top:14px;padding-top:14px}
+.detail-month{font-size:13px;font-weight:700;color:var(--text-2);margin-bottom:10px}
+.detail-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.stat-k{font-size:11.5px;color:var(--text-2)}
+.stat-v{font-size:17px;font-weight:800;margin-top:3px}
+.stat-v .unit{font-size:11px;font-weight:600;color:var(--text-3)}
+.totals{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
+.totals .cell{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:12px}
+.totals .cell .stat-v{font-size:15px;white-space:nowrap}
+/* ── 设置 ── */
+.set-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line);min-height:52px}
+.set-row:last-child{border-bottom:none}
+.set-k{font-size:14.5px;font-weight:600}
+.set-k small{display:block;font-size:11.5px;color:var(--text-3);font-weight:400;margin-top:2px}
+.seg.inline{margin:0;width:190px}
+.seg.inline button{min-height:32px;font-size:12.5px}
+.tier-table{padding:4px 16px 14px}
+.tier-line{display:grid;grid-template-columns:52px 1fr 1fr 34px;gap:8px;align-items:center;padding:7px 0}
+.tier-line .tname{font-size:12.5px;color:var(--text-2);font-weight:600}
+.tier-line input{width:100%}
+.tier-line .del{width:34px;height:34px;border:none;background:transparent;color:var(--text-3);cursor:pointer;border-radius:9px;display:flex;align-items:center;justify-content:center}
+.tier-line .del:active{color:var(--coral)}
+.tier-line .del svg{width:15px;height:15px}
+.tier-cap-note{font-size:12px;color:var(--text-3);text-align:center}
+.tier-headline{display:grid;grid-template-columns:52px 1fr 1fr 34px;gap:8px;font-size:11px;color:var(--text-3);padding:10px 0 2px}
+.add-tier{margin:2px 16px 16px;min-height:40px;font-size:13px;border-radius:11px}
+.about-note{color:var(--text-3);font-size:12.5px;line-height:1.7;padding:2px 4px 20px}
+input[type=number],input[type=date],input[type=text]{background:var(--field);border:1px solid var(--line);border-radius:11px;color:var(--text);font-size:14px;font-family:var(--font-num);padding:9px 11px;outline:none;min-height:40px;width:100%}
+input:focus{border-color:var(--amber)}
+input[type=date]{font-family:var(--font-num);color-scheme:dark}
+.demo-banner{display:flex;align-items:center;gap:10px;background:var(--sky-soft);border:1px solid rgba(92,168,255,.25);border-radius:16px;padding:12px 14px;font-size:13px;color:#A9CFFF;margin-bottom:14px}
+.demo-banner svg{width:16px;height:16px;flex:none;color:var(--sky)}
+/* ── 底部 tab 栏 ── */
+.tabbar{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;z-index:40;
+  background:rgba(11,15,23,.88);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  border-top:1px solid var(--line);display:grid;grid-template-columns:repeat(4,1fr);
+  padding-bottom:env(safe-area-inset-bottom)}
+.tab{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:58px;
+  background:none;border:none;color:var(--text-3);cursor:pointer;font-family:var(--font-ui)}
+.tab svg{width:22px;height:22px}
+.tab span{font-size:10.5px;font-weight:600}
+.tab.on{color:var(--amber)}
+/* ── 底部弹层 ── */
+.overlay{position:fixed;inset:0;z-index:60;display:none}
+.overlay.open{display:block}
+.overlay .backdrop{position:absolute;inset:0;background:rgba(0,0,0,.55);animation:fadein .2s ease}
+.sheet{position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;
+  background:var(--surface);border:1px solid var(--line);border-bottom:none;border-radius:24px 24px 0 0;
+  padding:10px 20px calc(20px + env(safe-area-inset-bottom));animation:slideup .25s cubic-bezier(.32,.72,.25,1)}
+@keyframes slideup{from{transform:translate(-50%,60px);opacity:.4}to{transform:translate(-50%,0);opacity:1}}
+.grabber{width:38px;height:4px;border-radius:99px;background:var(--line-strong);margin:4px auto 14px}
+.sheet-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.sheet-head h2{font-size:18px;font-weight:800}
+.sheet-del{background:none;border:none;color:var(--coral);font-size:13.5px;font-weight:700;cursor:pointer;padding:8px;font-family:var(--font-ui)}
+.f-label{font-size:12px;font-weight:600;color:var(--text-2);margin:14px 0 6px}
+.value-input{font-size:34px !important;font-weight:800;padding:12px 14px !important;min-height:64px !important;letter-spacing:-.01em}
+.warn-box{display:none;align-items:flex-start;gap:9px;background:var(--coral-soft);border:1px solid rgba(255,107,107,.3);
+  border-radius:12px;padding:11px 13px;font-size:12.5px;color:#FFA2A2;line-height:1.55;margin-top:14px}
+.warn-box.show{display:flex}
+.warn-box svg{width:15px;height:15px;flex:none;margin-top:1px;color:var(--coral)}
+.sheet .btn{margin-top:18px}
+/* ── 确认对话框 ── */
+.dialog-wrap{position:fixed;inset:0;z-index:70;display:none;align-items:center;justify-content:center;padding:32px}
+.dialog-wrap.open{display:flex}
+.dialog-wrap .backdrop{position:absolute;inset:0;background:rgba(0,0,0,.6);animation:fadein .18s ease}
+.dialog{position:relative;width:100%;max-width:320px;background:var(--surface-2);border:1px solid var(--line-strong);
+  border-radius:22px;padding:22px 20px 18px;animation:pop .2s cubic-bezier(.32,.72,.25,1)}
+@keyframes pop{from{transform:scale(.94);opacity:0}to{transform:scale(1);opacity:1}}
+.dialog h3{font-size:16.5px;font-weight:800}
+.dialog p{font-size:13.5px;color:var(--text-2);margin:8px 0 18px;line-height:1.6}
+.dialog .d-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.dialog .btn{min-height:46px;font-size:14px}
+/* ── toast ── */
+.toast{position:fixed;bottom:calc(84px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%) translateY(12px);
+  z-index:80;background:var(--surface-2);border:1px solid var(--line-strong);color:var(--text);
+  font-size:13.5px;font-weight:600;padding:11px 18px;border-radius:99px;opacity:0;pointer-events:none;
+  transition:opacity .22s,transform .22s;box-shadow:0 8px 28px rgba(0,0,0,.45);white-space:nowrap}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.hidden-file{display:none}
+</style>
+</head>
+<body>
+<div class="app">
+  <main id="main">
+    <section class="view" id="view-overview"></section>
+    <section class="view" id="view-records"></section>
+    <section class="view" id="view-trends"></section>
+    <section class="view" id="view-settings"></section>
+  </main>
+  <nav class="tabbar" id="tabbar"></nav>
+  <div class="overlay" id="sheetOverlay">
+    <div class="backdrop" data-action="close-sheet"></div>
+    <div class="sheet" id="sheet"></div>
+  </div>
+  <div class="dialog-wrap" id="dialogWrap">
+    <div class="backdrop"></div>
+    <div class="dialog" id="dialog"></div>
+  </div>
+  <div class="toast" id="toast"></div>
+  <input type="file" id="importFile" class="hidden-file" accept=".json,application/json">
+</div>
+<script>
+(function(){
+'use strict';
+/* ═══════════ 工具函数 ═══════════ */
+var $=function(s){return document.querySelector(s)};
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+function pad2(n){return (n<10?'0':'')+n}
+function parseDate(s){var p=s.split('-');return new Date(+p[0],+p[1]-1,+p[2])}
+function fmtDateStr(d){return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate())}
+function todayStr(){return fmtDateStr(new Date())}
+function diffDays(a,b){return Math.round((b.getTime()-a.getTime())/86400000)}
+function monthKey(d){return d.getFullYear()+'-'+pad2(d.getMonth()+1)}
+function monthKeyOf(s){return s.slice(0,7)}
+function prevMonthKey(k){var y=+k.slice(0,4),m=+k.slice(5,7);m--;if(m===0){m=12;y--}return y+'-'+pad2(m)}
+function daysInMonth(k){var y=+k.slice(0,4),m=+k.slice(5,7);return new Date(y,m,0).getDate()}
+function fmtMonthCN(k){return (+k.slice(0,4))+'年'+(+k.slice(5,7))+'月'}
+function fmtDateCN(s){var p=s.split('-');return (+p[1])+'月'+(+p[2])+'日'}
+function group3(s){return s.replace(/\B(?=(\d{3})+(?!\d))/g,',')}
+function fmtKwh(x){var v=(Math.round(x*10)/10).toFixed(1);var p=v.split('.');return group3(p[0])+'.'+p[1]}
+function fmtMoney(x){var neg=x<0;var v=Math.abs(x).toFixed(2);var p=v.split('.');return (neg?'-':'')+group3(p[0])+'.'+p[1]}
+function fmtPrice(x){return String(+(+x).toFixed(4))}
+function uid(p){return p+Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
+var CN_ORD=['一','二','三','四','五','六','七','八','九'];
+function tierName(i){return '第'+(CN_ORD[i]||String(i+1))+'档'}
+/* ═══════════ 状态与存储（localStorage key = elec.v1） ═══════════ */
+var KEY='elec.v1';
+function defaults(){return{
+  settings:{pricingMode:'tiered',flatPrice:0.55,
+    tiers:[{limit:2160,price:0.4883},{limit:4800,price:0.5383},{limit:null,price:0.7883}],
+    tierPeriod:'year'},
+  readings:[],payments:[],demo:false}}
+var state=load();
+function load(){
+  try{
+    var raw=localStorage.getItem(KEY);
+    if(!raw)return defaults();
+    var d=JSON.parse(raw),base=defaults();
+    if(!d||typeof d!=='object')return base;
+    d.settings=Object.assign(base.settings,d.settings||{});
+    if(!Array.isArray(d.settings.tiers)||!d.settings.tiers.length)d.settings.tiers=base.settings.tiers;
+    d.readings=Array.isArray(d.readings)?d.readings:[];
+    d.payments=Array.isArray(d.payments)?d.payments:[];
+    d.demo=!!d.demo;
+    return d;
+  }catch(e){return defaults()}
+}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(state))}catch(e){}}
+/* ═══════════ 示例数据（spec 第六节） ═══════════ */
+function demoData(){
+  var rows=[
+    ['2025-05-01',8210.5,'起始表底'],
+    ['2025-06-02',8415.5,''],
+    ['2025-07-01',8643.5,''],
+    ['2025-08-02',9055.5,'空调整月开'],
+    ['2025-09-01',9446.5,''],
+    ['2025-10-03',9692.5,''],
+    ['2025-11-01',9890.5,''],
+    ['2025-12-02',10129.5,''],
+    ['2026-01-01',10426.5,''],
+    ['2026-02-01',10768.5,'电暖器'],
+    ['2026-03-03',11094.5,''],
+    ['2026-04-01',11325.5,''],
+    ['2026-05-02',11529.5,''],
+    ['2026-06-01',11716.5,''],
+    ['2026-07-01',11940.5,'']];
+  var pays=[
+    ['2025-05-20',300,'网上国网充值'],
+    ['2025-07-15',400,'网上国网充值'],
+    ['2025-08-28',500,'支付宝生活缴费'],
+    ['2025-10-20',300,'物业代收'],
+    ['2025-12-18',350,'网上国网充值'],
+    ['2026-02-10',450,'支付宝生活缴费'],
+    ['2026-04-15',280,'物业代收'],
+    ['2026-06-12',400,'网上国网充值']];
+  return{
+    readings:rows.map(function(r,i){return{id:'demo-r'+i,date:r[0],value:r[1],note:r[2]}}),
+    payments:pays.map(function(p,i){return{id:'demo-p'+i,date:p[0],amount:p[1],note:p[2]}})};
+}
+function loadDemo(){
+  var d=demoData();
+  state.readings=d.readings;state.payments=d.payments;state.demo=true;
+  save();
+}
+/* ═══════════ 核心计算（spec 第五节，逐条实现） ═══════════ */
+function sortedReadings(){
+  return state.readings.slice().sort(function(a,b){
+    return a.date===b.date?(a.value-b.value):(a.date<b.date?-1:1)});
+}
+/* 规则1+2：区间用电按天均摊到自然日，再按自然月汇总（天数归属 [起,止) ） */
+function monthlyUsage(){
+  var rs=sortedReadings(),map={};
+  for(var i=1;i<rs.length;i++){
+    var a=parseDate(rs[i-1].date),b=parseDate(rs[i].date);
+    var days=diffDays(a,b);
+    if(days<=0)continue;
+    var kwh=rs[i].value-rs[i-1].value;
+    if(kwh<0)continue; /* 换表回退：区间不可推算，跳过 */
+    var daily=kwh/days,cur=new Date(a.getTime());
+    for(var t=0;t<days;t++){
+      var k=monthKey(cur);
+      map[k]=(map[k]||0)+daily;
+      cur.setDate(cur.getDate()+1);
+    }
+  }
+  return map;
+}
+/* 阶梯分段计价：累计 x 度对应的总电费 */
+function tierCost(x){
+  var tiers=state.settings.tiers,cost=0,prev=0;
+  for(var i=0;i<tiers.length;i++){
+    var cap=(tiers[i].limit==null)?Infinity:tiers[i].limit;
+    var take=Math.min(x,cap)-prev;
+    if(take>0)cost+=take*tiers[i].price;
+    if(x<=cap)break;
+    prev=cap;
+  }
+  return cost;
+}
+/* 规则3+4+5：逐月成本；year 模式每年1月1日累计清零，跨档分段计价 */
+function monthlyCosts(usage){
+  var keys=Object.keys(usage).sort(),costs={},cum=0,curYear=null,s=state.settings;
+  for(var i=0;i<keys.length;i++){
+    var k=keys[i],kwh=usage[k],cost;
+    if(s.pricingMode==='flat'){cost=kwh*s.flatPrice}
+    else if(s.tierPeriod==='month'){cost=tierCost(kwh)}
+    else{
+      var y=k.slice(0,4);
+      if(y!==curYear){curYear=y;cum=0}
+      cost=tierCost(cum+kwh)-tierCost(cum);
+      cum+=kwh;
+    }
+    costs[k]=cost;
+  }
+  return costs;
+}
+/* 当前阶梯状态（总览用） */
+function tierStatus(usage){
+  var s=state.settings,now=new Date(),cum=0,k;
+  if(s.tierPeriod==='month'){cum=usage[monthKey(now)]||0}
+  else{
+    var yr=String(now.getFullYear());
+    for(k in usage)if(k.slice(0,4)===yr)cum+=usage[k];
+  }
+  var tiers=s.tiers,idx=tiers.length-1;
+  for(var i=0;i<tiers.length;i++){
+    if(tiers[i].limit==null||cum<=tiers[i].limit){idx=i;break}
+  }
+  var limit=tiers[idx].limit;
+  return{cum:cum,idx:idx,price:tiers[idx].price,limit:limit,
+    remain:limit==null?null:Math.max(0,limit-cum),
+    pct:limit==null?1:Math.min(1,cum/limit)};
+}
+/* 区间估算电费：区间电量分摊进各月，按该月平均单价加权（与月度模型一致） */
+function intervalCost(prevR,curR,usage,costs){
+  var a=parseDate(prevR.date),b=parseDate(curR.date),days=diffDays(a,b);
+  if(days<=0)return null;
+  var kwh=curR.value-prevR.value;
+  if(kwh<0)return null;
+  var daily=kwh/days,total=0,cur=new Date(a.getTime());
+  for(var t=0;t<days;t++){
+    var k=monthKey(cur),mk=usage[k]||0,mc=costs[k]||0;
+    total+=daily*(mk>0?mc/mk:0);
+    cur.setDate(cur.getDate()+1);
+  }
+  return total;
+}
+function totalCost(costs){var s=0;for(var k in costs)s+=costs[k];return s}
+function totalPaid(){return state.payments.reduce(function(s,p){return s+(+p.amount||0)},0)}
+/* ═══════════ 内联 SVG 线性图标（stroke 1.75） ═══════════ */
+function svg(inner,w){return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="'+(w||1.75)+'" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+inner+'</svg>'}
+var I={
+  gauge:svg('<path d="M12 15l3.5-5.5"/><path d="M3.34 17a10 10 0 1 1 17.32 0"/><circle cx="12" cy="15" r="1.4"/>'),
+  list:svg('<path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01" stroke-width="2.4"/>'),
+  chart:svg('<path d="M3 3v16a2 2 0 0 0 2 2h16"/><rect x="7" y="11" width="3" height="6" rx="1"/><rect x="12.5" y="7" width="3" height="10" rx="1"/><rect x="18" y="13" width="3" height="4" rx="1"/>'),
+  gear:svg('<circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.65 8.9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.01A1.7 1.7 0 0 0 10.05 3V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.01c.26.63.87 1.04 1.56 1.04H21a2 2 0 1 1 0 4h-.09c-.69 0-1.3.41-1.56 1.03z"/>'),
+  bolt:svg('<path d="M13 2 4.5 13.5H11L9.5 22 19 10h-6.5L13 2z"/>'),
+  wallet:svg('<path d="M20 7H5a2 2 0 0 1-2-2 2 2 0 0 1 2-2h13v4"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1"/><path d="M16.5 13.5h.01" stroke-width="2.6"/>'),
+  plus:svg('<path d="M12 5v14M5 12h14"/>',2),
+  calendar:svg('<rect x="3" y="4.5" width="18" height="17" rx="3"/><path d="M8 2.5v4M16 2.5v4M3 10h18"/>'),
+  alert:svg('<path d="M10.3 3.9 1.9 18a2 2 0 0 0 1.7 3h16.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4.5M12 17.4h.01" stroke-width="2.2"/>'),
+  trash:svg('<path d="M3 6.5h18M8.5 6.5V4.8A1.8 1.8 0 0 1 10.3 3h3.4a1.8 1.8 0 0 1 1.8 1.8v1.7M18.5 6.5V19a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2V6.5"/><path d="M10 11v6M14 11v6"/>'),
+  download:svg('<path d="M12 3v12M7 10.5 12 15.5l5-5"/><path d="M4 17.5v2A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5v-2"/>'),
+  upload:svg('<path d="M12 15V3M7 7.5 12 2.5l5 5"/><path d="M4 17.5v2A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5v-2"/>'),
+  sparkle:svg('<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/><path d="M19 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2z"/>'),
+  arrowUp:svg('<path d="M12 19V5M6 11l6-6 6 6"/>',2.2),
+  arrowDown:svg('<path d="M12 5v14M6 13l6 6 6-6"/>',2.2),
+  layers:svg('<path d="m12 2 9 4.9-9 4.9-9-4.9L12 2z"/><path d="m3 11.9 9 4.9 9-4.9"/><path d="m3 16.8 9 4.9 9-4.9"/>'),
+  info:svg('<circle cx="12" cy="12" r="9.2"/><path d="M12 11v5.5M12 7.6h.01" stroke-width="2.2"/>'),
+  clock:svg('<circle cx="12" cy="12" r="9.2"/><path d="M12 7v5.2l3.4 2"/>')
+};
+/* ═══════════ 视图渲染 ═══════════ */
+var ui={recordsTab:'readings',trendMetric:'kwh',trendSel:null};
+var TABS=[['overview','总览',I.gauge],['records','记录',I.list],['trends','趋势',I.chart],['settings','设置',I.gear]];
+function renderTabbar(tab){
+  $('#tabbar').innerHTML=TABS.map(function(t){
+    return '<button class="tab'+(t[0]===tab?' on':'')+'" data-action="tab" data-tab="'+t[0]+'">'+t[2]+'<span>'+t[1]+'</span></button>';
+  }).join('');
+}
+function deltaChip(cur,prev){
+  if(prev==null||prev<=0)return '<span class="chip flat">上月无数据</span>';
+  var pct=(cur-prev)/prev*100,s=Math.abs(pct).toFixed(1);
+  if(Math.abs(pct)<0.05)return '<span class="chip flat">与上月持平</span>';
+  return pct>0
+    ?'<span class="chip up">'+I.arrowUp+'较上月 +'+s+'%</span>'
+    :'<span class="chip down">'+I.arrowDown+'较上月 -'+s+'%</span>';
+}
+function renderOverview(){
+  var el=$('#view-overview'),rs=sortedReadings();
+  var head='<div class="page-head"><div class="head-row"><div><h1>总览</h1>'+
+    '<div class="sub">'+fmtMonthCN(monthKey(new Date()))+(state.demo?' · <span style="color:var(--sky)">示例数据</span>':'')+'</div></div></div></div>';
+  if(rs.length<2){
+    el.innerHTML=head+
+      '<div class="card empty"><div class="eico">'+I.bolt+'</div>'+
+      '<h3>'+(rs.length===0?'记下第一次电表读数':'再记一次读数就能看到用电量了')+'</h3>'+
+      '<p>'+(rs.length===0?'到楼道电表箱抄一次表，从这里开始。':'已有 1 条读数，下一次抄表后即可算出区间用电量、日均和估算电费。')+'</p>'+
+      '<button class="btn btn-amber" data-action="add-reading">'+I.bolt+'记一笔读数</button></div>'+
+      '<div class="quick-actions"><button class="btn btn-ghost" data-action="add-payment">'+I.wallet+'记一笔缴费</button>'+
+      '<button class="btn btn-ghost" data-action="load-demo">'+I.sparkle+'载入示例数据</button></div>';
+    return;
+  }
+  var usage=monthlyUsage(),costs=monthlyCosts(usage);
+  var nowKey=monthKey(new Date()),keys=Object.keys(usage).sort();
+  var dispKey=(usage[nowKey]>0)?nowKey:keys[keys.length-1];
+  var dispKwh=usage[dispKey]||0,prevKwh=usage[prevMonthKey(dispKey)];
+  var dispLabel=(dispKey===nowKey)?'本月用电':(+dispKey.slice(5,7))+'月用电';
+  var last=rs[rs.length-1],prev=rs[rs.length-2];
+  var lastDays=diffDays(parseDate(prev.date),parseDate(last.date));
+  var lastKwh=last.value-prev.value;
+  var daily=(lastDays>0&&lastKwh>=0)?lastKwh/lastDays:null;
+  var sinceRead=diffDays(parseDate(last.date),new Date());
+  var ts=tierStatus(usage),s=state.settings;
+  var paid=totalPaid(),cost=totalCost(costs),bal=paid-cost;
+  var html=head;
+  html+='<div class="card"><div class="card-label">'+I.bolt+dispLabel+
+    (dispKey!==nowKey?'<span class="chip flat" style="margin-left:2px">本月暂无分摊数据</span>':'')+'</div>'+
+    '<div class="big-num amber">'+fmtKwh(dispKwh)+'<span class="unit">度</span></div>'+
+    '<div style="margin-top:10px">'+deltaChip(dispKwh,prevKwh)+'</div>'+
+    '<div class="mini-grid"><div class="mini"><div class="mini-k">日均用电 · 最近区间</div>'+
+    '<div class="mini-val">'+(daily==null?'—':fmtKwh(daily))+'<span class="unit">度/天</span></div></div>'+
+    '<div class="mini"><div class="mini-k">'+(dispKey===nowKey?'本月':(+dispKey.slice(5,7))+'月')+'估算电费</div>'+
+    '<div class="mini-val">'+fmtMoney(costs[dispKey]||0)+'<span class="unit">元</span></div></div></div></div>';
+  if(s.pricingMode==='tiered'){
+    var periodLabel=s.tierPeriod==='year'?String(new Date().getFullYear())+'年累计':'本月累计';
+    html+='<div class="card"><div class="card-label">'+I.layers+'阶梯电价 · '+(s.tierPeriod==='year'?'按年':'按月')+'</div>'+
+      '<div class="tier-head"><span class="tier-badge">'+I.bolt+tierName(ts.idx)+'</span>'+
+      '<span class="tier-price">'+fmtPrice(ts.price)+'<span class="unit"> 元/度</span></span></div>'+
+      '<div class="progress"><i class="'+(ts.limit==null?'full':'')+'" style="width:'+(ts.pct*100).toFixed(1)+'%"></i></div>'+
+      '<div class="progress-notes"><span>'+periodLabel+' <b>'+fmtKwh(ts.cum)+'</b> 度</span>'+
+      '<span>'+(ts.limit==null?'已达最高档':'距'+tierName(ts.idx+1)+'还剩 <b>'+fmtKwh(ts.remain)+'</b> 度')+'</span></div></div>';
+  }else{
+    html+='<div class="card"><div class="card-label">'+I.layers+'单一电价</div>'+
+      '<div class="tier-head"><span class="tier-badge">'+I.bolt+'固定单价</span>'+
+      '<span class="tier-price">'+fmtPrice(s.flatPrice)+'<span class="unit"> 元/度</span></span></div>'+
+      '<div class="progress-notes" style="margin-top:12px"><span>'+String(new Date().getFullYear())+'年累计用电 <b>'+fmtKwh(ts.cum)+'</b> 度</span></div></div>';
+  }
+  html+='<div class="card"><div class="card-label">'+I.wallet+'余额估算 <span class="chip flat">估算</span></div>'+
+    '<div class="big-num money '+(bal>=0?'mint':'coral')+'">'+fmtMoney(bal)+'<span class="unit">元</span></div>'+
+    '<div class="mini-grid"><div class="mini"><div class="mini-k">累计缴费</div>'+
+    '<div class="mini-val">'+fmtMoney(paid)+'<span class="unit">元</span></div></div>'+
+    '<div class="mini"><div class="mini-k">累计估算电费</div>'+
+    '<div class="mini-val">'+fmtMoney(cost)+'<span class="unit">元</span></div></div></div></div>';
+  html+='<div class="meta-row">'+I.clock+'<span>距上次抄表 <b class="num" style="color:var(--text)">'+sinceRead+'</b> 天（'+fmtDateCN(last.date)+'）</span>'+
+    (sinceRead>35?'<span class="chip warn">'+I.alert+'建议尽快抄表</span>':'')+'</div>';
+  html+='<div class="quick-actions"><button class="btn btn-amber" data-action="add-reading">'+I.bolt+'记一笔读数</button>'+
+    '<button class="btn btn-sky" data-action="add-payment">'+I.wallet+'记一笔缴费</button></div>';
+  el.innerHTML=html;
+}
+/* ── 记录页 ── */
+function renderRecords(){
+  var el=$('#view-records');
+  var head='<div class="page-head"><div class="head-row"><div><h1>记录</h1>'+
+    '<div class="sub">读数 '+state.readings.length+' 条 · 缴费 '+state.payments.length+' 笔</div></div>'+
+    '<button class="icon-btn" data-action="'+(ui.recordsTab==='readings'?'add-reading':'add-payment')+'" aria-label="新增">'+I.plus+'</button></div></div>';
+  var seg='<div class="seg"><button class="'+(ui.recordsTab==='readings'?'on':'')+'" data-action="rec-tab" data-val="readings">电表读数</button>'+
+    '<button class="'+(ui.recordsTab==='payments'?'on':'')+'" data-action="rec-tab" data-val="payments">缴费记录</button></div>';
+  var body='';
+  if(ui.recordsTab==='readings'){
+    var rs=sortedReadings();
+    if(!rs.length){
+      body='<div class="card empty"><div class="eico">'+I.bolt+'</div><h3>还没有读数记录</h3>'+
+        '<p>抄一次电表，记下总读数即可开始。</p>'+
+        '<button class="btn btn-amber" data-action="add-reading">'+I.bolt+'记一笔读数</button></div>';
+    }else{
+      var usage=monthlyUsage(),costs=monthlyCosts(usage);
+      var items='';
+      for(var i=rs.length-1;i>=0;i--){
+        var r=rs[i],sub,costLine='';
+        if(i===0){sub='起始读数';}
+        else{
+          var pr=rs[i-1],dd=diffDays(parseDate(pr.date),parseDate(r.date));
+          var dk=r.value-pr.value;
+          if(dk<0){sub='<b style="color:var(--coral)">读数回退（换表）</b> · 间隔 '+dd+' 天';}
+          else{
+            var ic=intervalCost(pr,r,usage,costs);
+            sub='<b style="color:var(--amber)">+'+fmtKwh(dk)+' 度</b> · 间隔 '+dd+' 天';
+            costLine='<div class="row-note" style="color:var(--text-2)">估算 ¥'+fmtMoney(ic||0)+'</div>';
+          }
+        }
+        if(r.note)sub+=' · '+esc(r.note);
+        items+='<div class="row" data-action="edit-reading" data-id="'+esc(r.id)+'">'+
+          '<div class="row-ico amber">'+I.bolt+'</div>'+
+          '<div class="row-main"><div class="row-title num">'+fmtDateCN(r.date)+' <span style="color:var(--text-3);font-weight:500;font-size:12px">'+r.date.slice(0,4)+'</span></div>'+
+          '<div class="row-sub">'+sub+'</div></div>'+
+          '<div class="row-right"><div class="row-val">'+fmtKwh(r.value)+'<span class="unit">度</span></div>'+
+          costLine+'</div></div>';
+      }
+      body='<div class="list">'+items+'</div>';
+    }
+  }else{
+    var ps=state.payments.slice().sort(function(a,b){return a.date<b.date?1:-1});
+    if(!ps.length){
+      body='<div class="card empty"><div class="eico" style="background:var(--sky-soft);color:var(--sky)">'+I.wallet+'</div><h3>还没有缴费记录</h3>'+
+        '<p>记录每次充值/缴费金额，即可估算电费余额。</p>'+
+        '<button class="btn btn-sky" data-action="add-payment">'+I.wallet+'记一笔缴费</button></div>';
+    }else{
+      var pitems='';
+      ps.forEach(function(p){
+        pitems+='<div class="row" data-action="edit-payment" data-id="'+esc(p.id)+'">'+
+          '<div class="row-ico sky">'+I.wallet+'</div>'+
+          '<div class="row-main"><div class="row-title num">'+fmtDateCN(p.date)+' <span style="color:var(--text-3);font-weight:500;font-size:12px">'+p.date.slice(0,4)+'</span></div>'+
+          '<div class="row-sub">'+(p.note?esc(p.note):'缴费')+'</div></div>'+
+          '<div class="row-right"><div class="row-val sky">+'+fmtMoney(+p.amount||0)+'<span class="unit">元</span></div></div></div>';
+      });
+      body='<div class="list">'+pitems+'</div>';
+    }
+  }
+  el.innerHTML=head+seg+body;
+}
+/* ── 趋势页 ── */
+function last12Keys(){
+  var keys=[],d=new Date();d.setDate(1);
+  for(var i=11;i>=0;i--){
+    var t=new Date(d.getFullYear(),d.getMonth()-i,1);
+    keys.push(monthKey(t));
+  }
+  return keys;
+}
+function roundTopBar(x,y,w,h,r){
+  if(h<=0)return '';
+  r=Math.min(r,w/2,h);
+  return 'M'+x+' '+(y+h)+'V'+(y+r)+'Q'+x+' '+y+' '+(x+r)+' '+y+'H'+(x+w-r)+'Q'+(x+w)+' '+y+' '+(x+w)+' '+(y+r)+'V'+(y+h)+'Z';
+}
+function renderTrends(){
+  var el=$('#view-trends');
+  var head='<div class="page-head"><div class="head-row"><div><h1>趋势</h1><div class="sub">近 12 个月</div></div></div></div>';
+  var usage=monthlyUsage(),costs=monthlyCosts(usage);
+  var keys=last12Keys(),metric=ui.trendMetric;
+  var seg='<div class="seg"><button class="'+(metric==='kwh'?'on':'')+'" data-action="trend-metric" data-val="kwh">用电量（度）</button>'+
+    '<button class="'+(metric==='cost'?'on':'')+'" data-action="trend-metric" data-val="cost">费用（元）</button></div>';
+  var vals=keys.map(function(k){return metric==='kwh'?(usage[k]||0):(costs[k]||0)});
+  var hasAny=vals.some(function(v){return v>0});
+  if(!hasAny){
+    el.innerHTML=head+seg+'<div class="card empty"><div class="eico">'+I.chart+'</div><h3>还没有可视化的数据</h3>'+
+      '<p>记录两次以上电表读数后，这里会画出近 12 个月的'+(metric==='kwh'?'用电量':'费用')+'柱状图。</p>'+
+      '<button class="btn btn-amber" data-action="add-reading">'+I.bolt+'记一笔读数</button></div>';
+    return;
+  }
+  var withData=keys.filter(function(k){return (usage[k]||0)>0||(costs[k]||0)>0});
+  if(ui.trendSel==null||withData.indexOf(ui.trendSel)<0)ui.trendSel=withData[withData.length-1];
+  var max=Math.max.apply(null,vals),niceMax=max*1.12||1;
+  var W=358,H=216,padL=6,padR=6,top=26,base=H-26;
+  var slot=(W-padL-padR)/12,bw=Math.min(20,slot*0.58);
+  var bars='',hits='',labels='';
+  keys.forEach(function(k,i){
+    var v=vals[i],x=padL+slot*i+(slot-bw)/2;
+    var has=(usage[k]||0)>0||(costs[k]||0)>0;
+    var sel=(k===ui.trendSel);
+    if(has&&v>0){
+      var h=Math.max(3,(v/niceMax)*(base-top));
+      bars+='<path d="'+roundTopBar(x,base-h,bw,h,5)+'" fill="'+(sel?'var(--amber)':'var(--bar-dim)')+'"/>';
+      if(sel){
+        bars+='<text x="'+(x+bw/2)+'" y="'+(base-h-8)+'" text-anchor="middle" fill="var(--amber)" font-size="11" font-weight="800" font-family="Manrope,sans-serif">'+
+          (metric==='kwh'?Math.round(v):Math.round(v))+'</text>';
+      }
+    }else{
+      bars+='<rect x="'+x+'" y="'+(base-2.5)+'" width="'+bw+'" height="2.5" rx="1.25" fill="rgba(255,255,255,.08)"/>';
+    }
+    if(has)hits+='<rect class="bar-hit" data-action="trend-sel" data-val="'+k+'" x="'+(padL+slot*i)+'" y="'+top+'" width="'+slot+'" height="'+(base-top)+'" fill="transparent"/>';
+    labels+='<text x="'+(padL+slot*i+slot/2)+'" y="'+(H-8)+'" text-anchor="middle" fill="'+(sel?'var(--amber)':'var(--text-3)')+'" font-size="9.5" font-weight="600" font-family="Manrope,sans-serif">'+(+k.slice(5,7))+'月</text>';
+  });
+  var grid='';
+  [0.5,1].forEach(function(f){
+    var gy=base-(base-top)*f;
+    grid+='<line x1="'+padL+'" y1="'+gy+'" x2="'+(W-padR)+'" y2="'+gy+'" stroke="rgba(255,255,255,.06)" stroke-dasharray="3 4"/>'+
+      '<text x="'+(W-padR)+'" y="'+(gy-5)+'" text-anchor="end" fill="var(--text-3)" font-size="9" font-family="Manrope,sans-serif">'+Math.round(niceMax*f)+'</text>';
+  });
+  grid+='<line x1="'+padL+'" y1="'+base+'" x2="'+(W-padR)+'" y2="'+base+'" stroke="rgba(255,255,255,.12)"/>';
+  var svgChart='<div class="chart-wrap"><svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="近12个月'+(metric==='kwh'?'用电量':'费用')+'柱状图">'+grid+bars+hits+labels+'</svg></div>';
+  /* 选中月明细 */
+  var sk=ui.trendSel,skwh=usage[sk]||0,scost=costs[sk]||0,sdaily=skwh/daysInMonth(sk);
+  var detail='<div class="detail-panel"><div class="detail-month">'+fmtMonthCN(sk)+'</div><div class="detail-grid">'+
+    '<div><div class="stat-k">用电量</div><div class="stat-v">'+fmtKwh(skwh)+'<span class="unit"> 度</span></div></div>'+
+    '<div><div class="stat-k">估算费用</div><div class="stat-v">'+fmtMoney(scost)+'<span class="unit"> 元</span></div></div>'+
+    '<div><div class="stat-k">日均</div><div class="stat-v">'+fmtKwh(sdaily)+'<span class="unit"> 度</span></div></div></div></div>';
+  /* 12 个月合计 */
+  var tKwh=0,tCost=0,nData=0;
+  keys.forEach(function(k){var u=usage[k]||0,c=costs[k]||0;tKwh+=u;tCost+=c;if(u>0||c>0)nData++});
+  var avg=nData?((metric==='kwh'?tKwh:tCost)/nData):0;
+  var totals='<div class="totals">'+
+    '<div class="cell"><div class="stat-k">总用电</div><div class="stat-v">'+fmtKwh(tKwh)+'<span class="unit"> 度</span></div></div>'+
+    '<div class="cell"><div class="stat-k">总费用</div><div class="stat-v">'+fmtMoney(tCost)+'<span class="unit"> 元</span></div></div>'+
+    '<div class="cell"><div class="stat-k">月均'+(metric==='kwh'?'用电':'费用')+'</div><div class="stat-v">'+(metric==='kwh'?fmtKwh(avg):fmtMoney(avg))+'<span class="unit"> '+(metric==='kwh'?'度':'元')+'</span></div></div></div>';
+  el.innerHTML=head+seg+'<div class="card">'+svgChart+detail+'</div>'+totals;
+}
+/* ── 设置页 ── */
+function renderSettings(){
+  var el=$('#view-settings'),s=state.settings;
+  var head='<div class="page-head"><h1>设置</h1><div class="sub">电价规则与数据管理</div></div>';
+  var demoBanner=state.demo?'<div class="demo-banner">'+I.info+'<span>当前为示例数据，仅用于演示。清空全部数据后即可记录自己的电表。</span></div>':'';
+  var pricing='<div class="list"><div class="set-row"><div class="set-k">电价模式</div>'+
+    '<div class="seg inline"><button class="'+(s.pricingMode==='flat'?'on':'')+'" data-action="set-mode" data-val="flat">单一电价</button>'+
+    '<button class="'+(s.pricingMode==='tiered'?'on':'')+'" data-action="set-mode" data-val="tiered">阶梯电价</button></div></div>';
+  if(s.pricingMode==='flat'){
+    pricing+='<div class="set-row"><div class="set-k">电价<small>元/度</small></div>'+
+      '<input type="number" step="0.0001" min="0" style="width:120px;text-align:right" value="'+esc(s.flatPrice)+'" data-action-change="flat-price"></div></div>';
+  }else{
+    pricing+='<div class="set-row"><div class="set-k">阶梯周期<small>累计用量的清零周期</small></div>'+
+      '<div class="seg inline" style="width:150px"><button class="'+(s.tierPeriod==='year'?'on':'')+'" data-action="set-period" data-val="year">按年</button>'+
+      '<button class="'+(s.tierPeriod==='month'?'on':'')+'" data-action="set-period" data-val="month">按月</button></div></div>';
+    var rows='<div class="tier-headline"><span></span><span>累计上限（度）</span><span>价格（元/度）</span><span></span></div>';
+    s.tiers.forEach(function(t,i){
+      var isLast=(i===s.tiers.length-1);
+      rows+='<div class="tier-line"><span class="tname">'+tierName(i)+'</span>'+
+        (isLast?'<span class="tier-cap-note">以上不限</span>'
+          :'<input type="number" step="1" min="0" value="'+esc(t.limit)+'" data-action-change="tier-limit" data-idx="'+i+'">')+
+        '<input type="number" step="0.0001" min="0" value="'+esc(t.price)+'" data-action-change="tier-price" data-idx="'+i+'">'+
+        ((!isLast&&s.tiers.length>2)?'<button class="del" data-action="tier-del" data-idx="'+i+'" aria-label="删除档位">'+I.trash+'</button>':'<span></span>')+
+        '</div>';
+    });
+    pricing+='<div class="tier-table">'+rows+'</div>'+
+      '<button class="btn btn-ghost add-tier" data-action="tier-add" style="width:calc(100% - 32px)">'+I.plus+'添加档位</button></div>';
+  }
+  var data='<div class="card-label" style="padding:6px 4px 10px">数据管理</div><div class="list">'+
+    '<div class="row" data-action="export"><div class="row-ico amber">'+I.download+'</div><div class="row-main"><div class="row-title">导出 JSON</div><div class="row-sub">下载全部读数、缴费与设置</div></div></div>'+
+    '<div class="row" data-action="import"><div class="row-ico sky">'+I.upload+'</div><div class="row-main"><div class="row-title">导入 JSON</div><div class="row-sub">从导出文件恢复（覆盖当前数据）</div></div></div>'+
+    '<div class="row" data-action="load-demo"><div class="row-ico" style="background:var(--mint-soft);color:var(--mint)">'+I.sparkle+'</div><div class="row-main"><div class="row-title">载入示例数据</div><div class="row-sub">15 次读数 + 8 笔缴费的演示数据</div></div></div>'+
+    '<div class="row" data-action="wipe"><div class="row-ico" style="background:var(--coral-soft);color:var(--coral)">'+I.trash+'</div><div class="row-main"><div class="row-title" style="color:var(--coral)">清空全部数据</div><div class="row-sub">不可恢复，需二次确认</div></div></div></div>';
+  var about='<div class="about-note">电费记账本 · 纯本地离线工具。数据仅保存在本机浏览器中（localStorage），不上传任何服务器。电费金额为按当前电价规则的估算值，实际以电网账单为准。</div>';
+  el.innerHTML=head+demoBanner+'<div class="card-label" style="padding:6px 4px 10px">电价规则</div>'+pricing+data+about;
+}
+/* ═══════════ 底部弹层表单 ═══════════ */
+var sheetCtx=null;
+function openSheet(html,ctx){
+  sheetCtx=ctx||null;
+  $('#sheet').innerHTML=html;
+  $('#sheetOverlay').classList.add('open');
+}
+function closeSheet(){
+  $('#sheetOverlay').classList.remove('open');
+  $('#sheet').innerHTML='';sheetCtx=null;
+}
+function readingSheet(id){
+  var r=id?state.readings.find(function(x){return x.id===id}):null;
+  var html='<div class="grabber"></div><div class="sheet-head"><h2>'+(r?'编辑读数':'记一笔读数')+'</h2>'+
+    (r?'<button class="sheet-del" data-action="del-reading">删除</button>':'')+'</div>'+
+    '<div class="f-label">日期</div><input type="date" id="f-date" value="'+esc(r?r.date:todayStr())+'">'+
+    '<div class="f-label">电表读数（度）</div><input type="number" step="0.1" min="0" inputmode="decimal" class="value-input" id="f-value" placeholder="00000.0" value="'+(r?esc(r.value):'')+'">'+
+    '<div class="f-label">备注（可选）</div><input type="text" id="f-note" maxlength="30" placeholder="如：换表、月底抄表" value="'+esc(r?r.note:'')+'">'+
+    '<div class="warn-box" id="f-warn">'+I.alert+'<span id="f-warn-text"></span></div>'+
+    '<button class="btn btn-amber" id="f-save" data-action="save-reading">保存</button>';
+  openSheet(html,{type:'reading',id:id||null,force:false});
+  setTimeout(function(){if(!r)$('#f-value').focus()},250);
+}
+function paymentSheet(id){
+  var p=id?state.payments.find(function(x){return x.id===id}):null;
+  var html='<div class="grabber"></div><div class="sheet-head"><h2>'+(p?'编辑缴费':'记一笔缴费')+'</h2>'+
+    (p?'<button class="sheet-del" data-action="del-payment">删除</button>':'')+'</div>'+
+    '<div class="f-label">日期</div><input type="date" id="f-date" value="'+esc(p?p.date:todayStr())+'">'+
+    '<div class="f-label">金额（元）</div><input type="number" step="0.01" min="0" inputmode="decimal" class="value-input" id="f-value" placeholder="0.00" value="'+(p?esc(p.amount):'')+'">'+
+    '<div class="f-label">备注（可选）</div><input type="text" id="f-note" maxlength="30" placeholder="如：网上国网充值" value="'+esc(p?p.note:'')+'">'+
+    '<div class="warn-box" id="f-warn">'+I.alert+'<span id="f-warn-text"></span></div>'+
+    '<button class="btn btn-sky" id="f-save" data-action="save-payment" style="background:var(--sky);color:#06182E">保存</button>';
+  openSheet(html,{type:'payment',id:id||null,force:false});
+  setTimeout(function(){if(!p)$('#f-value').focus()},250);
+}
+function showFormWarn(msg,forceLabel){
+  $('#f-warn-text').textContent=msg;
+  $('#f-warn').classList.add('show');
+  var b=$('#f-save');
+  b.textContent=forceLabel||'仍要保存';
+  b.classList.remove('btn-amber');b.classList.add('btn-danger-solid');
+  b.removeAttribute('style');
+}
+function saveReading(){
+  var date=$('#f-date').value,val=parseFloat($('#f-value').value),note=$('#f-note').value.trim();
+  if(!date){showToast('请选择日期');return}
+  if(isNaN(val)||val<0){showToast('请输入有效读数');return}
+  var id=sheetCtx.id;
+  /* 校验：电表不会倒走（换表除外，允许强制保存） */
+  if(!sheetCtx.force){
+    var others=sortedReadings().filter(function(r){return r.id!==id});
+    var prev=null,next=null;
+    others.forEach(function(r){
+      if(r.date<=date&&(!prev||r.date>prev.date))prev=r;
+      if(r.date>date&&(!next||r.date<next.date))next=r;
+    });
+    var msg=null;
+    if(prev&&val<prev.value)msg='新读数 '+fmtKwh(val)+' 小于上次（'+fmtDateCN(prev.date)+'）的 '+fmtKwh(prev.value)+' 度。电表不会倒走——若确因换表请点「仍要保存」。';
+    else if(next&&val>next.value)msg='该读数大于之后（'+fmtDateCN(next.date)+'）的记录 '+fmtKwh(next.value)+' 度，请确认无误后再保存。';
+    if(msg){sheetCtx.force=true;showFormWarn(msg);return}
+  }
+  if(id){
+    var r=state.readings.find(function(x){return x.id===id});
+    r.date=date;r.value=val;r.note=note;
+  }else{
+    state.readings.push({id:uid('r'),date:date,value:val,note:note});
+  }
+  save();closeSheet();renderCurrent();showToast('读数已保存');
+}
+function savePayment(){
+  var date=$('#f-date').value,val=parseFloat($('#f-value').value),note=$('#f-note').value.trim();
+  if(!date){showToast('请选择日期');return}
+  if(isNaN(val)||val<=0){showToast('请输入有效金额');return}
+  var id=sheetCtx.id;
+  if(id){
+    var p=state.payments.find(function(x){return x.id===id});
+    p.date=date;p.amount=val;p.note=note;
+  }else{
+    state.payments.push({id:uid('p'),date:date,amount:val,note:note});
+  }
+  save();closeSheet();renderCurrent();showToast('缴费已保存');
+}
+/* ═══════════ 确认对话框 / toast ═══════════ */
+var dialogCb=null;
+function confirmDialog(title,msg,confirmLabel,danger,cb){
+  dialogCb=cb;
+  $('#dialog').innerHTML='<h3>'+esc(title)+'</h3><p>'+esc(msg)+'</p>'+
+    '<div class="d-actions"><button class="btn btn-ghost" data-action="dialog-cancel">取消</button>'+
+    '<button class="btn '+(danger?'btn-danger-solid':'btn-amber')+'" data-action="dialog-ok">'+esc(confirmLabel)+'</button></div>';
+  $('#dialogWrap').classList.add('open');
+}
+function closeDialog(){$('#dialogWrap').classList.remove('open');$('#dialog').innerHTML='';dialogCb=null}
+var toastTimer=null;
+function showToast(msg){
+  var t=$('#toast');t.textContent=msg;t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(function(){t.classList.remove('show')},2200);
+}
+/* ═══════════ 导出 / 导入 ═══════════ */
+function exportJSON(){
+  var blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='电费记账本-'+todayStr()+'.json';
+  document.body.appendChild(a);a.click();
+  setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},400);
+  showToast('已导出 JSON');
+}
+function importJSON(file){
+  var reader=new FileReader();
+  reader.onload=function(){
+    try{
+      var d=JSON.parse(reader.result);
+      if(!d||typeof d!=='object'||!Array.isArray(d.readings)||!Array.isArray(d.payments))throw new Error('bad');
+      confirmDialog('导入数据','将用文件中的 '+d.readings.length+' 条读数、'+d.payments.length+' 笔缴费覆盖当前数据，确定导入吗？','导入并覆盖',false,function(){
+        var base=defaults();
+        state={settings:Object.assign(base.settings,d.settings||{}),
+          readings:d.readings,payments:d.payments,demo:!!d.demo};
+        if(!Array.isArray(state.settings.tiers)||!state.settings.tiers.length)state.settings.tiers=base.settings.tiers;
+        save();renderCurrent();showToast('导入成功');
+      });
+    }catch(e){showToast('文件格式不正确')}
+  };
+  reader.readAsText(file);
+}
+/* ═══════════ 事件（委托） ═══════════ */
+document.addEventListener('click',function(ev){
+  var t=ev.target.closest('[data-action]');
+  if(!t)return;
+  var act=t.getAttribute('data-action'),val=t.getAttribute('data-val'),idx=+t.getAttribute('data-idx');
+  switch(act){
+    case 'tab':location.hash='#'+t.getAttribute('data-tab');break;
+    case 'rec-tab':ui.recordsTab=val;renderRecords();break;
+    case 'trend-metric':ui.trendMetric=val;renderTrends();break;
+    case 'trend-sel':ui.trendSel=val;renderTrends();break;
+    case 'add-reading':readingSheet(null);break;
+    case 'add-payment':paymentSheet(null);break;
+    case 'edit-reading':readingSheet(t.getAttribute('data-id'));break;
+    case 'edit-payment':paymentSheet(t.getAttribute('data-id'));break;
+    case 'save-reading':saveReading();break;
+    case 'save-payment':savePayment();break;
+    case 'del-reading':(function(){var id=sheetCtx.id;
+      confirmDialog('删除这条读数？','删除后该区间的用电量与费用将重新计算。','删除',true,function(){
+        state.readings=state.readings.filter(function(r){return r.id!==id});
+        save();closeSheet();renderCurrent();showToast('已删除读数');});})();break;
+    case 'del-payment':(function(){var id=sheetCtx.id;
+      confirmDialog('删除这笔缴费？','删除后余额估算将重新计算。','删除',true,function(){
+        state.payments=state.payments.filter(function(p){return p.id!==id});
+        save();closeSheet();renderCurrent();showToast('已删除缴费');});})();break;
+    case 'close-sheet':closeSheet();break;
+    case 'dialog-cancel':closeDialog();break;
+    case 'dialog-ok':(function(){var cb=dialogCb;closeDialog();if(cb)cb()})();break;
+    case 'set-mode':state.settings.pricingMode=val;save();renderSettings();break;
+    case 'set-period':state.settings.tierPeriod=val;save();renderSettings();break;
+    case 'tier-add':(function(){
+      var ts=state.settings.tiers,lastFinite=0;
+      for(var i=0;i<ts.length;i++)if(ts[i].limit!=null)lastFinite=Math.max(lastFinite,ts[i].limit);
+      ts.splice(ts.length-1,0,{limit:lastFinite+1200,price:ts[ts.length-1].price});
+      save();renderSettings();showToast('已添加档位');})();break;
+    case 'tier-del':state.settings.tiers.splice(idx,1);save();renderSettings();showToast('已删除档位');break;
+    case 'export':exportJSON();break;
+    case 'import':$('#importFile').click();break;
+    case 'load-demo':
+      if(state.readings.length||state.payments.length){
+        confirmDialog('载入示例数据','将覆盖当前全部读数与缴费记录，确定载入吗？','载入示例',false,function(){loadDemo();renderCurrent();showToast('已载入示例数据')});
+      }else{loadDemo();renderCurrent();showToast('已载入示例数据')}
+      break;
+    case 'wipe':
+      confirmDialog('清空全部数据？','所有读数、缴费记录与设置都会被删除，且不可恢复。','全部清空',true,function(){
+        state=defaults();save();renderCurrent();showToast('已清空全部数据')});
+      break;
+  }
+});
+document.addEventListener('change',function(ev){
+  var t=ev.target.closest('[data-action-change]');
+  if(t){
+    var act=t.getAttribute('data-action-change'),idx=+t.getAttribute('data-idx'),v=parseFloat(t.value);
+    var s=state.settings;
+    if(act==='flat-price'){
+      if(isNaN(v)||v<0){showToast('请输入有效电价');renderSettings();return}
+      s.flatPrice=v;save();showToast('电价已更新');
+    }else if(act==='tier-price'){
+      if(isNaN(v)||v<0){showToast('请输入有效价格');renderSettings();return}
+      s.tiers[idx].price=v;save();showToast('价格已更新');
+    }else if(act==='tier-limit'){
+      var prev=idx>0?s.tiers[idx-1].limit:0;
+      var next=(idx+1<s.tiers.length)?s.tiers[idx+1].limit:null;
+      if(isNaN(v)||v<=prev||(next!=null&&v>=next)){
+        showToast('上限须大于上一档且小于下一档');renderSettings();return}
+      s.tiers[idx].limit=v;save();showToast('阶梯上限已更新');
+    }
+    return;
+  }
+  if(ev.target.id==='importFile'&&ev.target.files&&ev.target.files[0]){
+    importJSON(ev.target.files[0]);
+    ev.target.value='';
+  }
+});
+/* 表单输入时清除强制保存状态 */
+document.addEventListener('input',function(ev){
+  if(sheetCtx&&sheetCtx.type==='reading'&&sheetCtx.force&&(ev.target.id==='f-value'||ev.target.id==='f-date')){
+    sheetCtx.force=false;
+    $('#f-warn').classList.remove('show');
+    var b=$('#f-save');
+    b.textContent='保存';b.classList.add('btn-amber');b.classList.remove('btn-danger-solid');
+  }
+});
+document.addEventListener('keydown',function(ev){
+  if(ev.key==='Escape'){
+    if($('#dialogWrap').classList.contains('open'))closeDialog();
+    else if($('#sheetOverlay').classList.contains('open'))closeSheet();
+  }
+});
+/* ═══════════ hash 路由 ═══════════ */
+var VALID=['overview','records','trends','settings'];
+function currentTab(){
+  var h=(location.hash||'').replace('#','');
+  return VALID.indexOf(h)>=0?h:'overview';
+}
+function renderCurrent(){
+  var tab=currentTab();
+  VALID.forEach(function(v){
+    $('#view-'+v).classList.toggle('active',v===tab);
+  });
+  renderTabbar(tab);
+  if(tab==='overview')renderOverview();
+  else if(tab==='records')renderRecords();
+  else if(tab==='trends')renderTrends();
+  else renderSettings();
+  window.scrollTo(0,0);
+}
+window.addEventListener('hashchange',renderCurrent);
+/* ═══════════ 启动：?demo=1 自动载入示例数据 ═══════════ */
+(function init(){
+  try{
+    var q=new URLSearchParams(location.search);
+    if(q.get('demo')==='1'&&!state.demo){loadDemo()}
+  }catch(e){}
+  if(!location.hash)location.hash='#overview';
+  renderCurrent();
+})();
+})();
+</script>
+</body>
+</html>
