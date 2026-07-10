@@ -193,6 +193,20 @@ svg{display:block}
 .tri-stats{display:grid;grid-template-columns:repeat(3,1fr);margin-top:12px}
 .tri-stats>div{padding:12px 6px 12px 14px}
 .tri-stats>div+div{border-left:1px solid var(--line2)}
+.chart-tools{display:flex;align-items:center;gap:10px;margin:14px 2px 8px}
+.chart-tools .ctl-lab{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}
+.chart-tools .seg2{margin-left:auto}
+.month-nav{display:flex;align-items:center;justify-content:center;gap:8px;margin:2px 2px 4px}
+.month-nav .nav-btn{width:34px;height:34px;min-height:34px;border-radius:9px;display:flex;align-items:center;
+  justify-content:center;color:var(--sub);border:1px solid var(--line);background:var(--card)}
+.month-nav .nav-btn:active{background:var(--line2)}
+.month-nav .nav-btn:disabled{opacity:.32;pointer-events:none}
+.month-nav .m-title{font-size:14.5px;font-weight:700;min-width:116px;text-align:center;display:inline-flex;
+  align-items:center;gap:7px;justify-content:center}
+.month-nav .chip{width:8px;height:8px;border-radius:2.5px;flex:none}
+.cd-day-info{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px;font-size:12px;color:var(--mut)}
+.cd-day-info .num{font-weight:700;color:var(--ink);font-size:13px}
+.cd-day-sub{font-size:11px;color:var(--faint)}
 
 /* ── 设置 ─────────────────────────── */
 .set-card{padding:6px 0}
@@ -815,7 +829,10 @@ function renderRecords() {
 'use strict';
 /* ════════ Tab 3 · 趋势（纯内联 SVG 柱状图） ════════ */
 let trendMode = 'kwh';      // 'kwh' | 'cost'
-let trendSel = null;        // 选中的月份 key
+let trendSel = null;        // 选中月份 key（月度视图）
+let trendView = 'month';    // 'month' | 'day'  统计维度
+let trendDayMonth = null;   // 日度视图选中的月份 key
+let trendSelDay = null;     // 日度视图选中的日期 'YYYY-MM-DD'
 function last12Months() {
   const now = new Date();
   const out = [];
@@ -825,16 +842,62 @@ function last12Months() {
   }
   return out;
 }
+// 日度归集：指定月份每一天落在哪个抄表区间 → 取该日用电（= 区间日均）。
+// 同一区间内每日值相同，诚实反映「日均」语义；与月度归集 Σ日 ≡ 月用量 一致。
+function dailyDataForMonth(mk, intervals) {
+  const [y, m] = mk.split('-').map(Number);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  const out = [];
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateStr = fmtDate(new Date(y, m - 1, day));
+    const iv = intervals.find(v => v.fromDate <= dateStr && dateStr < v.toDate);
+    out.push({ date: dateStr, day: day, daily: iv ? iv.daily : 0, hasData: !!iv, iv: iv || null });
+  }
+  return out;
+}
 function renderTrends() {
   const el = document.getElementById('screen-trends');
   const C = computeAll();
-  const months = last12Months();
+  const intervals = C.intervals;
   const isKwh = trendMode === 'kwh';
-  const vals = months.map(mk => isKwh ? (C.kwhByMonth.get(mk) || 0) : (C.costByMonth.get(mk) || 0));
-  const hasAny = vals.some(v => v > 0.05);
   const color = isKwh ? '#0EA5E9' : '#A855F7';
   const colorSoft = isKwh ? '#BAE6FD' : '#E9D5FF';
   const colorDeep = isKwh ? '#0284C7' : '#9333EA';
+
+  // 顶部共用控件：用电量/费用 + 月度/日度
+  const controls =
+    '<div class="seg">' +
+      '<button class="' + (isKwh ? 'on t-sky' : '') + '" data-mode="kwh">' + icon('zap', 15) + '用电量（度）</button>' +
+      '<button class="' + (!isKwh ? 'on t-purple' : '') + '" data-mode="cost">' + icon('coins', 15) + '费用（元）</button>' +
+    '</div>' +
+    '<div class="chart-tools">' +
+      '<span class="ctl-lab">统计维度</span>' +
+      '<div class="seg2">' +
+        '<button class="' + (trendView === 'month' ? 'on' : '') + '" data-view="month">月度</button>' +
+        '<button class="' + (trendView === 'day' ? 'on' : '') + '" data-view="day">日度</button>' +
+      '</div>' +
+    '</div>';
+
+  // 读数不足 2 条 → 无区间 → 空状态（spec 5.6）
+  if (intervals.length === 0) {
+    el.innerHTML = controls +
+      '<div class="card chart-card"><div class="empty" style="padding:28px 16px">' +
+        '<div class="empty-ico" style="background:var(--purple-soft)">' + icon('trend', 24, '', '#A855F7') + '</div>' +
+        '<h3>暂无趋势数据</h3><p>记录两次以上电表读数后，<br>这里会画出用电柱状图。</p>' +
+        '<button class="qa-btn sky" style="width:100%" data-act="add-reading">' + icon('plus', 17) + '记一笔读数</button>' +
+      '</div></div>';
+    return;
+  }
+
+  el.innerHTML = controls + (trendView === 'day'
+    ? renderTrendsDay(C, intervals, isKwh, color, colorSoft, colorDeep)
+    : renderTrendsMonth(C, isKwh, color, colorSoft, colorDeep));
+}
+// ── 月度视图：近 12 个月柱状图 ──
+function renderTrendsMonth(C, isKwh, color, colorSoft, colorDeep) {
+  const months = last12Months();
+  const vals = months.map(mk => isKwh ? (C.kwhByMonth.get(mk) || 0) : (C.costByMonth.get(mk) || 0));
+  const hasAny = vals.some(v => v > 0.05);
 
   // ── SVG 手绘柱状图 ──
   const W = 358, H = 210, padL = 34, padR = 6, padT = 14, padB = 26;
@@ -902,24 +965,122 @@ function renderTrends() {
   const totC = months.reduce((a, mk) => a + (C.costByMonth.get(mk) || 0), 0);
   const avg = dataMonths.length ? (isKwh ? totK : totC) / dataMonths.length : 0;
 
-  el.innerHTML =
-    '<div class="seg">' +
-      '<button class="' + (isKwh ? 'on t-sky' : '') + '" data-mode="kwh">' + icon('zap', 15) + '用电量（度）</button>' +
-      '<button class="' + (!isKwh ? 'on t-purple' : '') + '" data-mode="cost">' + icon('coins', 15) + '费用（元）</button>' +
-    '</div>' +
-    '<div class="sec-label"><span class="chip ' + (isKwh ? 'c-sky' : 'c-purple') + '"></span>近 12 个月 · ' + (isKwh ? '月度用电量' : '月度估算费用') + '</div>' +
-    '<div class="card chart-card">' +
-      (hasAny ? svg + detail :
-        '<div class="empty" style="padding:28px 16px"><div class="empty-ico" style="background:var(--purple-soft)">' + icon('trend', 24, '', '#A855F7') + '</div>' +
-        '<h3>暂无趋势数据</h3><p>记录两次以上电表读数后，<br>这里会画出近 12 个月的用电柱状图。</p>' +
-        '<button class="qa-btn sky" style="width:100%" data-act="add-reading">' + icon('plus', 17) + '记一笔读数</button></div>') +
-    '</div>' +
+  return '<div class="sec-label"><span class="chip ' + (isKwh ? 'c-sky' : 'c-purple') + '"></span>近 12 个月 · ' + (isKwh ? '月度用电量' : '月度估算费用') + '</div>' +
+    '<div class="card chart-card">' + svg + detail + '</div>' +
     (hasAny ?
-      '<div class="card tri-stats" >' +
+      '<div class="card tri-stats">' +
         '<div><div class="mini-label">12 个月总用电</div><div class="mini-num" style="color:var(--sky-deep)">' + fk(totK) + '<span class="u">度</span></div></div>' +
         '<div><div class="mini-label">总费用</div><div class="mini-num" style="color:var(--purple-deep)">' + fm(totC) + '<span class="u">元</span></div></div>' +
         '<div><div class="mini-label">月均' + (isKwh ? '用电' : '费用') + '</div><div class="mini-num">' + (isKwh ? fk(avg) : fm(avg)) +
           '<span class="u">' + (isKwh ? '度' : '元') + '</span></div></div>' +
+      '</div>' : '');
+}
+// ── 日度视图：选定月份的每日柱状图（区间日均按天铺开）──
+function renderTrendsDay(C, intervals, isKwh, color, colorSoft, colorDeep) {
+  const allMonths = Array.from(C.kwhByMonth.keys()).sort();
+  // 选中月份失效（数据被删/改）时回退到最近有数据的月份
+  if (!trendDayMonth || !C.kwhByMonth.has(trendDayMonth)) {
+    trendDayMonth = allMonths[allMonths.length - 1];
+  }
+  const mk = trendDayMonth;
+  const days = dailyDataForMonth(mk, intervals);
+  const unitPrice = C.unitPrice.get(mk) || 0;     // 该月综合单价（assumption 2）
+  const vals = days.map(d => isKwh ? d.daily : d.daily * unitPrice);
+  const hasAny = vals.some(v => v > 0.05);
+  const dataDays = days.filter(d => d.hasData).length;
+
+  // 月份导航边界：首个 ~ 末个有数据的月份
+  const earliestMk = allMonths[0], latestMk = allMonths[allMonths.length - 1];
+  const canPrev = mk > earliestMk, canNext = mk < latestMk;
+  const chevL = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform:scaleX(-1)"><path d="m9 18 6-6-6-6"/></svg>';
+  const monthNav = '<div class="month-nav">' +
+    '<button class="nav-btn"' + (canPrev ? '' : ' disabled') + ' data-day-nav="prev" aria-label="上一月">' + chevL + '</button>' +
+    '<span class="m-title"><span class="chip ' + (isKwh ? 'c-sky' : 'c-purple') + '"></span>' + cnMonth(mk) + '</span>' +
+    '<button class="nav-btn"' + (canNext ? '' : ' disabled') + ' data-day-nav="next" aria-label="下一月">' + icon('chevron', 16) + '</button>' +
+    '</div>';
+
+  // ── SVG 日度柱状图（28~31 根细柱）──
+  const W = 358, H = 210, padL = 30, padR = 6, padT = 14, padB = 26;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const n = days.length, slot = plotW / n, bw = Math.min(slot * 0.72, 8);
+  const maxV = Math.max(...vals.filter(v => v > 0), 1);
+  const step = niceStep(maxV / 3);
+  const yMax = Math.ceil(maxV / step) * step || step;
+  let svg = '<svg class="chart-svg" viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">';
+  svg += '<defs><linearGradient id="gsel" x1="0" y1="0" x2="0" y2="1">' +
+    '<stop offset="0" stop-color="' + (isKwh ? '#38BDF8' : '#C084FC') + '"/>' +
+    '<stop offset="1" stop-color="' + colorDeep + '"/></linearGradient></defs>';
+  for (let g = 0; g <= 3; g++) {
+    const v = yMax / 3 * g;
+    const y = padT + plotH - (v / yMax) * plotH;
+    svg += '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y +
+      '" stroke="#E2E8F0" stroke-width="1"' + (g === 0 ? '' : ' stroke-dasharray="3 4"') + '/>';
+    svg += '<text x="' + (padL - 5) + '" y="' + (y + 3.5) + '" text-anchor="end" font-size="9" ' +
+      'font-family="JetBrains Mono,monospace" fill="#94A3B8">' + (v >= 1000 ? (v / 1000) + 'k' : Math.round(v)) + '</text>';
+  }
+  days.forEach((d, i) => {
+    const cx = padL + slot * (i + 0.5);
+    // 日期标签：1/6/11/16/21/26 与最末一日
+    if ((d.day - 1) % 5 === 0 || d.day === n) {
+      svg += '<text x="' + cx + '" y="' + (H - 8) + '" text-anchor="middle" font-size="8.5" ' +
+        'font-family="JetBrains Mono,monospace" font-weight="' + (trendSelDay === d.date ? '700' : '400') + '" fill="' +
+        (trendSelDay === d.date ? colorDeep : '#94A3B8') + '">' + d.day + '</text>';
+    }
+    if (!d.hasData) return; // 无抄表区间覆盖的日期不画柱（保留时间轴留白）
+    const v = vals[i];
+    const bh = Math.max(2, (v / yMax) * plotH);
+    const y = padT + plotH - bh;
+    const sel = trendSelDay === d.date;
+    const fill = sel ? 'url(#gsel)' : colorSoft;
+    svg += '<g class="bar" data-day="' + d.date + '">' +
+      '<rect x="' + (cx - slot / 2) + '" y="' + padT + '" width="' + slot + '" height="' + plotH + '" fill="transparent"/>' +
+      '<rect x="' + (cx - bw / 2) + '" y="' + y.toFixed(1) + '" width="' + bw + '" height="' + bh.toFixed(1) +
+      '" rx="2" fill="' + fill + '"' + (!sel ? ' stroke="' + color + '" stroke-opacity=".35" stroke-width="0.8"' : '') + '/>' +
+      '</g>';
+  });
+  svg += '</svg>';
+
+  // ── 点选日期明细 ──
+  let detail = '';
+  if (trendSelDay) {
+    const d = days.find(x => x.date === trendSelDay);
+    if (d && d.iv) {
+      const iv = d.iv, cost = d.daily * unitPrice;
+      detail = '<div class="chart-detail">' +
+        '<div class="cd-day-info">' + icon('calendar', 13, '', '#94A3B8') +
+        '<span class="num">' + cnDate(d.date) + '</span>' +
+        '<span class="cd-day-sub">属抄表区间 ' + cnDate(iv.fromDate).slice(5) + ' → ' + cnDate(iv.toDate).slice(5) + '（共 ' + iv.days + ' 天）</span>' +
+        '</div><div class="cd-grid">' +
+        '<div class="cd-cell"><div class="mini-label">当日用电</div><div class="mini-num" style="color:var(--sky-deep)">' + fk(d.daily) + '<span class="u">度</span></div></div>' +
+        '<div class="cd-cell"><div class="mini-label">估算费用</div><div class="mini-num" style="color:var(--purple-deep)">' + fm(cost) + '<span class="u">元</span></div></div>' +
+        '<div class="cd-cell"><div class="mini-label">区间共用电</div><div class="mini-num">' + fk(iv.kwh) + '<span class="u">度</span></div></div>' +
+        '<div class="cd-cell"><div class="mini-label">区间日均</div><div class="mini-num">' + fk(iv.daily) + '<span class="u">度/天</span></div></div>' +
+        '</div></div>';
+    }
+  } else if (hasAny) {
+    detail = '<div class="chart-detail" style="text-align:center;font-size:11.5px;color:var(--faint)">点击柱子查看该日明细 · 日度值为所属抄表区间的日均</div>';
+  }
+
+  // ── 该月合计（Σ日 ≡ 月度归集用量）──
+  const totKwh = days.reduce((a, d) => a + d.daily, 0);
+  const totCost = totKwh * unitPrice;
+  const avgDaily = dataDays ? totKwh / dataDays : 0;
+  const avgDailyCost = dataDays ? totCost / dataDays : 0;
+  const pref = mk === monthKey(todayStr()) ? '本月' : '该月';
+
+  return monthNav +
+    '<div class="sec-label"><span class="chip ' + (isKwh ? 'c-sky' : 'c-purple') + '"></span>' + (isKwh ? '日度用电量' : '日度估算费用') + '</div>' +
+    '<div class="card chart-card">' +
+      (hasAny ? svg + detail :
+        '<div class="empty" style="padding:24px 16px"><h3 style="font-size:14px">' + cnMonth(mk) + '暂无抄表数据</h3>' +
+        '<p>用上方箭头切换月份，或先去记录一笔读数。</p></div>') +
+    '</div>' +
+    (hasAny ?
+      '<div class="card tri-stats">' +
+        '<div><div class="mini-label">' + pref + '用电</div><div class="mini-num" style="color:var(--sky-deep)">' + fk(totKwh) + '<span class="u">度</span></div></div>' +
+        '<div><div class="mini-label">' + pref + '费用</div><div class="mini-num" style="color:var(--purple-deep)">' + fm(totCost) + '<span class="u">元</span></div></div>' +
+        '<div><div class="mini-label">日均' + (isKwh ? '用电' : '费用') + '</div><div class="mini-num">' + (isKwh ? fk(avgDaily) : fm(avgDailyCost)) +
+          '<span class="u">' + (isKwh ? '度/天' : '元/天') + '</span></div></div>' +
       '</div>' : '');
 }
 function niceStep(x) {
@@ -1166,9 +1327,21 @@ document.addEventListener('click', e => {
   if ((n = q('[data-edit-payment]'))) { openPaymentSheet(n.getAttribute('data-edit-payment')); return; }
   if ((n = q('[data-seg]'))) { recordsSeg = n.getAttribute('data-seg'); renderRecords(); return; }
   if ((n = q('[data-mode]'))) { trendMode = n.getAttribute('data-mode'); renderTrends(); return; }
+  if ((n = q('[data-view]'))) { trendView = n.getAttribute('data-view'); trendSelDay = null; renderTrends(); return; }
+  if ((n = q('[data-day-nav]'))) {
+    const dir = n.getAttribute('data-day-nav');
+    const [yy, mm] = trendDayMonth.split('-').map(Number);
+    trendDayMonth = fmtDate(new Date(yy, mm - 1 + (dir === 'next' ? 1 : -1), 1)).slice(0, 7);
+    trendSelDay = null; renderTrends(); return;
+  }
   if ((n = q('.bar[data-mk]'))) {
     const mk = n.getAttribute('data-mk');
     trendSel = (trendSel === mk) ? null : mk;
+    renderTrends(); return;
+  }
+  if ((n = q('.bar[data-day]'))) {
+    const day = n.getAttribute('data-day');
+    trendSelDay = (trendSelDay === day) ? null : day;
     renderTrends(); return;
   }
   if ((n = q('[data-mode-set]'))) {
